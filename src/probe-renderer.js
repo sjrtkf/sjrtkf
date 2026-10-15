@@ -1,0 +1,3 @@
+'use strict';
+window.probe.onState(s=>{document.getElementById('state').textContent=s.message;const list=document.getElementById('results');list.replaceChildren();for(const row of s.results){const li=document.createElement('li');li.textContent=`${row.attemptId||row.runId||'이전 기록'} · ${row.mode} · HTTP ${row.status??'미확인'} · 요청 완료 ${row.elapsedMs??'—'}ms · 좌석 URL 도착 ${row.seatNavigationMs??'미측정'}${row.seatNavigationMs==null?'':'ms'} · ${row.outcome}`;list.append(li);}});
+document.querySelectorAll('button').forEach(b=>b.addEventListener('click',async()=>{try{await window.probe.command(b.dataset.action);}catch{document.getElementById('state').textContent='작업을 수행하지 못했습니다. 창의 상태를 확인해 주세요.';}}));

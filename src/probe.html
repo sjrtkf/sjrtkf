@@ -1,0 +1,8 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline'; script-src 'self'"><title>예매 진입 비교 실험 v2</title><style>body{font:15px 'Malgun Gothic',sans-serif;background:#f4f6fa;color:#192337;padding:24px;margin:0}h1{font-size:23px}button{padding:12px;margin:5px 0;border:1px solid #bac4d4;border-radius:8px;background:white;cursor:pointer;width:100%;font:inherit}p{line-height:1.6}.box{background:white;padding:14px;border-radius:10px;margin-top:12px}li{margin:10px 0;font-size:14px}#state{font-weight:bold;color:#2347ad}</style></head><body>
+<h1>예매 진입 비교 실험 v2</h1><p>별도 예매 창에서 로그인하고 경기를 선택하세요. 좌석 선택과 결제는 자동으로 진행하지 않습니다.</p>
+<button data-action="home">새 측정 창 열기</button><button data-action="arm">다음 진입 요청 1건을 직접 전송</button><button data-action="observe">일반 버튼 관찰 모드로 복귀</button>
+<div class="box"><p id="state">준비 중</p></div>
+<p>직접 전송 모드를 선택한 뒤 사이트의 활성화된 예매 버튼을 누르세요. 사이트가 만든 요청을 한 번만 대신 전송합니다. 인증 정보·응답 본문은 파일과 화면에 기록하지 않습니다.</p>
+<p>이번 실험은 직접 전송의 호환성을 확인합니다. 버튼을 누르기 전 지연은 측정하지 않으므로 최속 비교 결과가 아닙니다.</p>
+<div class="box"><strong>이번 세션의 결과</strong><ul id="results"></ul></div><script src="probe-renderer.js"></script></body></html>
+

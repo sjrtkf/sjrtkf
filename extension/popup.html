@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="ko">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>야구 티켓팅 도우미 연결</title><link rel="stylesheet" href="popup.css"></head>
+<body>
+  <header><span class="mark" aria-hidden="true">⚾</span><div><p class="eyebrow">CHROME 연결</p><h1>야구 티켓팅 도우미</h1></div></header>
+  <section class="connection" aria-label="연결 상태">
+    <div class="status-line"><span id="badge" class="badge">확인 중</span><button type="button" id="refresh" class="text-button">상태 새로 확인</button></div>
+    <p id="status" role="status" aria-live="polite">프로그램 연결을 확인하고 있어요.</p>
+  </section>
+  <form id="pair" novalidate>
+    <label for="code">도우미에 표시된 연결 코드</label>
+    <p class="hint" id="codeHint">도우미 창에서 ‘복사’를 누른 뒤 여기에 붙여 넣으세요.</p>
+    <input id="code" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="80" placeholder="32자리 연결 코드 붙여넣기" aria-describedby="codeHint codeError">
+    <p id="codeError" class="error" role="alert" hidden></p>
+    <button id="connect" class="primary" type="submit">프로그램 연결</button>
+  </form>
+  <div id="ready" class="ready" hidden><strong>연결 준비가 끝났어요</strong><p>도우미 창에서 포스트시즌 페이지나 가상 좌석 연습을 열어 주세요.</p></div>
+  <details id="help"><summary>연결이 안 되거나 창이 안 보이나요?</summary><ol><li>도우미 실행 파일을 다시 열면 기존 창이 앞으로 나와요. 작업 표시줄의 숨겨진 아이콘에서도 도우미를 찾을 수 있어요.</li><li>도우미에서 <strong>새 연결 코드 만들기 → 복사</strong>를 누르세요. 코드는 20분 동안 한 번 사용할 수 있어요.</li><li>여기에 붙여 넣고 다시 연결하세요. 이전 버전 도우미가 함께 켜져 있다면 종료해 주세요.</li></ol></details>
+  <footer>로그인과 예매는 이 Chrome에서 진행해요.<br>좌석 확인 중에는 Chrome에 디버깅 연결 안내가 표시돼요.</footer>
+  <script src="popup.js"></script>
+</body>
+</html>

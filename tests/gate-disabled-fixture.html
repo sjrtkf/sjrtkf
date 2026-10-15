@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="ko">
+<meta charset="utf-8">
+<title>공개 코드의 내부 상태 검사 최소 재현</title>
+<body>
+<h1>공개 코드의 내부 상태 검사 최소 재현</h1>
+<p>로컬 모의 실험입니다. React 검증이나 실제 예매 요청이 아닙니다.</p>
+<main></main>
+<script>
+'use strict';
+function scenario() {
+  const root=document.querySelector('main');
+  root.replaceChildren();
+  const button=document.createElement('button');
+  button.textContent='모의 예매하기';
+  root.append(button);
+  const state={logicalDisabled:true,busy:false,requests:0,blockedWhileBusy:0,guardReturns:0,events:[],pending:null};
+  let currentHandler;
+  const mark=kind=>state.events.push({kind,at:performance.now()});
+  // Mirrors Ld's captured `r`, `if(r)return`, and finally's 1,000ms wait.
+  // React's synthetic event filtering is intentionally NOT reproduced.
+  function render(disabled) {
+    state.logicalDisabled=disabled;
+    button.disabled=disabled;
+    const capturedDisabled=disabled;
+    currentHandler=async()=>{
+      try {
+        if(capturedDisabled){state.guardReturns++;mark('logical-disabled-return');return;}
+        state.requests++;
+        mark('simulated-entry');
+      } finally {
+        await new Promise(resolve=>setTimeout(resolve,1000));
+        mark('handler-finally-finished');
+      }
+    };
+  }
+  // Mirrors Ya's stable callback, current-handler ref, and in-flight ref.
+  async function wrapped() {
+    if(state.busy){state.blockedWhileBusy++;mark('busy-block');return;}
+    state.busy=true;
+    mark('handler-start');
+    try{return await currentHandler();}
+    finally{state.busy=false;mark('busy-released');}
+  }
+  function invoke(){const pending=wrapped();state.pending=pending;return pending;}
+  button.addEventListener('click',invoke);
+  render(true);
+  return {state,button,render,invoke};
+}
+window.runGateDisabledExperiment=async()=>{
+  const results=[];
+  {
+    const s=scenario(),start=performance.now();
+    s.button.disabled=false;
+    s.button.click();
+    const observation={logicalDisabled:s.state.logicalDisabled,domDisabled:s.button.disabled,requestsImmediately:s.state.requests,guardReturns:s.state.guardReturns,busyImmediately:s.state.busy};
+    await s.state.pending;
+    results.push({case:'dom-only-enable',...observation,settledAfterMs:performance.now()-start,events:s.state.events});
+  }
+  {
+    const s=scenario(),start=performance.now();
+    const blockedAttempt=s.invoke();
+    const busyAfterDisabledInvocation=s.state.busy;
+    s.render(false);
+    s.button.click();
+    const immediately={busyAfterDisabledInvocation,requestsOnNaturalActivation:s.state.requests,blockedWhileBusy:s.state.blockedWhileBusy};
+    await blockedAttempt;
+    const releasedAfterMs=performance.now()-start;
+    s.button.click();
+    const requestsAfterRelease=s.state.requests;
+    await s.state.pending;
+    results.push({case:'disabled-handler-lock',...immediately,releasedAfterMs,requestsAfterRelease,events:s.state.events});
+  }
+  {
+    const s=scenario();
+    s.render(false);
+    const start=performance.now();
+    s.button.click();
+    const requestsSynchronously=s.state.requests,dispatchToSimulatedEntryMs=performance.now()-start;
+    await s.state.pending;
+    results.push({case:'natural-activation',requestsSynchronously,dispatchToSimulatedEntryMs,guardReturns:s.state.guardReturns,blockedWhileBusy:s.state.blockedWhileBusy,events:s.state.events});
+  }
+  return results;
+};
+</script>
+</body>
+</html>

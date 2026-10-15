@@ -1,0 +1,863 @@
+{
+  "version": "0.9.2",
+  "model_sha256": "4ccd8eea47a3a1a9ad366e1a408470d5d807cd3c7c8d31cba2ae31c7116a3e1a",
+  "core_sha256": "69288133b49f9c6b12614c90295989e284f02f55c91329310c4f09d0d0a6d437",
+  "source_model_sha256": "587bde77a3db865de1fa1070c479c6dc4df05394d6259d0b1b34cdabfc755e28",
+  "split_sha256": "ba9155d87002c68900154b391247e42f1f5a283d4d14aa72f47e57163616749f",
+  "original_images": {
+    "train": 161,
+    "validation": 35,
+    "final_test": 34
+  },
+  "augmented_training_images": 1399,
+  "character_pool": 9360,
+  "epochs_evaluated": 20,
+  "selected_epoch": 5,
+  "validation_summary": {
+    "baseline": {
+      "model_sha256": "587bde77a3db865de1fa1070c479c6dc4df05394d6259d0b1b34cdabfc755e28",
+      "clean": {
+        "images": 35,
+        "exact_correct": 35,
+        "exact_accuracy": 1.0,
+        "character_accuracy": 1.0,
+        "segmentation_failures": 0,
+        "accepted_at_075": 35,
+        "accepted_wrong": 0,
+        "accepted_coverage": 1.0,
+        "accepted_error_rate": 0.0,
+        "confusions": {},
+        "latency_ms": {
+          "median": 3.1682999979238957,
+          "p95": 5.302899997332133
+        }
+      },
+      "stress": {
+        "images": 315,
+        "exact_correct": 293,
+        "exact_accuracy": 0.9301587301587302,
+        "character_accuracy": 0.9597883597883597,
+        "segmentation_failures": 10,
+        "accepted_at_075": 289,
+        "accepted_wrong": 4,
+        "accepted_coverage": 0.9174603174603174,
+        "accepted_error_rate": 0.01384083044982699,
+        "confusions": {
+          "M->N": 1,
+          "C->L": 1,
+          "E->L": 2,
+          "D->U": 1,
+          "W->U": 1,
+          "Z->L": 1,
+          "B->P": 1,
+          "K->P": 1,
+          "M->T": 1,
+          "R->Q": 1,
+          "R->P": 1,
+          "Q->L": 1,
+          "P->E": 2,
+          "S->T": 1
+        },
+        "latency_ms": {
+          "median": 3.0893000002834015,
+          "p95": 5.839899997226894
+        }
+      },
+      "by_variant": {
+        "rotate_minus": {
+          "images": 35,
+          "exact_correct": 35,
+          "exact_accuracy": 1.0,
+          "character_accuracy": 1.0,
+          "segmentation_failures": 0,
+          "accepted_at_075": 35,
+          "accepted_wrong": 0,
+          "accepted_coverage": 1.0,
+          "accepted_error_rate": 0.0,
+          "confusions": {},
+          "latency_ms": {
+            "median": 3.118900000117719,
+            "p95": 4.681399994296953
+          }
+        },
+        "rotate_plus": {
+          "images": 35,
+          "exact_correct": 34,
+          "exact_accuracy": 0.9714285714285714,
+          "character_accuracy": 0.9952380952380953,
+          "segmentation_failures": 0,
+          "accepted_at_075": 34,
+          "accepted_wrong": 0,
+          "accepted_coverage": 0.9714285714285714,
+          "accepted_error_rate": 0.0,
+          "confusions": {
+            "P->E": 1
+          },
+          "latency_ms": {
+            "median": 3.210800001397729,
+            "p95": 5.251899994618725
+          }
+        },
+        "shear_minus": {
+          "images": 35,
+          "exact_correct": 34,
+          "exact_accuracy": 0.9714285714285714,
+          "character_accuracy": 0.9714285714285714,
+          "segmentation_failures": 1,
+          "accepted_at_075": 33,
+          "accepted_wrong": 0,
+          "accepted_coverage": 0.9428571428571428,
+          "accepted_error_rate": 0.0,
+          "confusions": {},
+          "latency_ms": {
+            "median": 2.9620999994222075,
+            "p95": 4.750899999635294
+          }
+        },
+        "shear_plus": {
+          "images": 35,
+          "exact_correct": 33,
+          "exact_accuracy": 0.9428571428571428,
+          "character_accuracy": 0.9666666666666667,
+          "segmentation_failures": 1,
+          "accepted_at_075": 33,
+          "accepted_wrong": 0,
+          "accepted_coverage": 0.9428571428571428,
+          "accepted_error_rate": 0.0,
+          "confusions": {
+            "P->E": 1
+          },
+          "latency_ms": {
+            "median": 2.98320000001695,
+            "p95": 4.627500005881302
+          }
+        },
+        "narrow": {
+          "images": 35,
+          "exact_correct": 34,
+          "exact_accuracy": 0.9714285714285714,
+          "character_accuracy": 0.9714285714285714,
+          "segmentation_failures": 1,
+          "accepted_at_075": 34,
+          "accepted_wrong": 0,
+          "accepted_coverage": 0.9714285714285714,
+          "accepted_error_rate": 0.0,
+          "confusions": {},
+          "latency_ms": {
+            "median": 3.1366999974125065,
+            "p95": 6.037799998011906
+          }
+        },
+        "wide": {
+          "images": 35,
+          "exact_correct": 34,
+          "exact_accuracy": 0.9714285714285714,
+          "character_accuracy": 0.9714285714285714,
+          "segmentation_failures": 1,
+          "accepted_at_075": 32,
+          "accepted_wrong": 0,
+          "accepted_coverage": 0.9142857142857143,
+          "accepted_error_rate": 0.0,
+          "confusions": {},
+          "latency_ms": {
+            "median": 3.040899995539803,
+            "p95": 4.822999995667487
+          }
+        },
+        "noise": {
+          "images": 35,
+          "exact_correct": 35,
+          "exact_accuracy": 1.0,
+          "character_accuracy": 1.0,
+          "segmentation_failures": 0,
+          "accepted_at_075": 35,
+          "accepted_wrong": 0,
+          "accepted_coverage": 1.0,
+          "accepted_error_rate": 0.0,
+          "confusions": {},
+          "latency_ms": {
+            "median": 3.285600003437139,
+            "p95": 6.8911000053049065
+          }
+        },
+        "darker": {
+          "images": 35,
+          "exact_correct": 22,
+          "exact_accuracy": 0.6285714285714286,
+          "character_accuracy": 0.7761904761904762,
+          "segmentation_failures": 6,
+          "accepted_at_075": 23,
+          "accepted_wrong": 4,
+          "accepted_coverage": 0.6571428571428571,
+          "accepted_error_rate": 0.17391304347826086,
+          "confusions": {
+            "M->N": 1,
+            "C->L": 1,
+            "D->U": 1,
+            "E->L": 1,
+            "W->U": 1,
+            "Z->L": 1,
+            "B->P": 1,
+            "K->P": 1,
+            "M->T": 1,
+            "R->Q": 1,
+            "R->P": 1
+          },
+          "latency_ms": {
+            "median": 2.962300000945106,
+            "p95": 4.059099999722093
+          }
+        },
+        "lighter": {
+          "images": 35,
+          "exact_correct": 32,
+          "exact_accuracy": 0.9142857142857143,
+          "character_accuracy": 0.9857142857142858,
+          "segmentation_failures": 0,
+          "accepted_at_075": 30,
+          "accepted_wrong": 0,
+          "accepted_coverage": 0.8571428571428571,
+          "accepted_error_rate": 0.0,
+          "confusions": {
+            "E->L": 1,
+            "Q->L": 1,
+            "S->T": 1
+          },
+          "latency_ms": {
+            "median": 3.1256000002031215,
+            "p95": 5.841300000611227
+          }
+        }
+      }
+    },
+    "candidate": {
+      "model_sha256": "4ccd8eea47a3a1a9ad366e1a408470d5d807cd3c7c8d31cba2ae31c7116a3e1a",
+      "clean": {
+        "images": 35,
+        "exact_correct": 35,
+        "exact_accuracy": 1.0,
+        "character_accuracy": 1.0,
+        "segmentation_failures": 0,
+        "accepted_at_075": 35,
+        "accepted_wrong": 0,
+        "accepted_coverage": 1.0,
+        "accepted_error_rate": 0.0,
+        "confusions": {},
+        "latency_ms": {
+          "median": 3.070799997658469,
+          "p95": 3.995099999883678
+        }
+      },
+      "stress": {
+        "images": 315,
+        "exact_correct": 302,
+        "exact_accuracy": 0.9587301587301588,
+        "character_accuracy": 0.9772486772486773,
+        "segmentation_failures": 6,
+        "accepted_at_075": 296,
+        "accepted_wrong": 3,
+        "accepted_coverage": 0.9396825396825397,
+        "accepted_error_rate": 0.010135135135135136,
+        "confusions": {
+          "M->N": 1,
+          "E->L": 2,
+          "D->U": 1,
+          "R->P": 1,
+          "Q->L": 1,
+          "S->C": 1
+        },
+        "latency_ms": {
+          "median": 3.112500002316665,
+          "p95": 8.83849999809172
+        }
+      },
+      "by_variant": {
+        "rotate_minus": {
+          "images": 35,
+          "exact_correct": 35,
+          "exact_accuracy": 1.0,
+          "character_accuracy": 1.0,
+          "segmentation_failures": 0,
+          "accepted_at_075": 35,
+          "accepted_wrong": 0,
+          "accepted_coverage": 1.0,
+          "accepted_error_rate": 0.0,
+          "confusions": {},
+          "latency_ms": {
+            "median": 2.9565000004367903,
+            "p95": 4.051399999298155
+          }
+        },
+        "rotate_plus": {
+          "images": 35,
+          "exact_correct": 35,
+          "exact_accuracy": 1.0,
+          "character_accuracy": 1.0,
+          "segmentation_failures": 0,
+          "accepted_at_075": 34,
+          "accepted_wrong": 0,
+          "accepted_coverage": 0.9714285714285714,
+          "accepted_error_rate": 0.0,
+          "confusions": {},
+          "latency_ms": {
+            "median": 3.200000006472692,
+            "p95": 5.326200000126846
+          }
+        },
+        "shear_minus": {
+          "images": 35,
+          "exact_correct": 34,
+          "exact_accuracy": 0.9714285714285714,
+          "character_accuracy": 0.9714285714285714,
+          "segmentation_failures": 1,
+          "accepted_at_075": 34,
+          "accepted_wrong": 0,
+          "accepted_coverage": 0.9714285714285714,
+          "accepted_error_rate": 0.0,
+          "confusions": {},
+          "latency_ms": {
+            "median": 2.8718000030494295,
+            "p95": 4.374600001028739
+          }
+        },
+        "shear_plus": {
+          "images": 35,
+          "exact_correct": 34,
+          "exact_accuracy": 0.9714285714285714,
+          "character_accuracy": 0.9714285714285714,
+          "segmentation_failures": 1,
+          "accepted_at_075": 33,
+          "accepted_wrong": 0,
+          "accepted_coverage": 0.9428571428571428,
+          "accepted_error_rate": 0.0,
+          "confusions": {},
+          "latency_ms": {
+            "median": 3.0970000007073395,
+            "p95": 6.7229999986011535
+          }
+        },
+        "narrow": {
+          "images": 35,
+          "exact_correct": 34,
+          "exact_accuracy": 0.9714285714285714,
+          "character_accuracy": 0.9714285714285714,
+          "segmentation_failures": 1,
+          "accepted_at_075": 34,
+          "accepted_wrong": 0,
+          "accepted_coverage": 0.9714285714285714,
+          "accepted_error_rate": 0.0,
+          "confusions": {},
+          "latency_ms": {
+            "median": 3.047900005185511,
+            "p95": 4.796200002601836
+          }
+        },
+        "wide": {
+          "images": 35,
+          "exact_correct": 34,
+          "exact_accuracy": 0.9714285714285714,
+          "character_accuracy": 0.9714285714285714,
+          "segmentation_failures": 1,
+          "accepted_at_075": 34,
+          "accepted_wrong": 0,
+          "accepted_coverage": 0.9714285714285714,
+          "accepted_error_rate": 0.0,
+          "confusions": {},
+          "latency_ms": {
+            "median": 3.2439999995403923,
+            "p95": 4.880400003457908
+          }
+        },
+        "noise": {
+          "images": 35,
+          "exact_correct": 35,
+          "exact_accuracy": 1.0,
+          "character_accuracy": 1.0,
+          "segmentation_failures": 0,
+          "accepted_at_075": 35,
+          "accepted_wrong": 0,
+          "accepted_coverage": 1.0,
+          "accepted_error_rate": 0.0,
+          "confusions": {},
+          "latency_ms": {
+            "median": 3.1553000007988885,
+            "p95": 4.382600003737025
+          }
+        },
+        "darker": {
+          "images": 35,
+          "exact_correct": 29,
+          "exact_accuracy": 0.8285714285714286,
+          "character_accuracy": 0.9238095238095239,
+          "segmentation_failures": 2,
+          "accepted_at_075": 31,
+          "accepted_wrong": 3,
+          "accepted_coverage": 0.8857142857142857,
+          "accepted_error_rate": 0.0967741935483871,
+          "confusions": {
+            "M->N": 1,
+            "D->U": 1,
+            "E->L": 1,
+            "R->P": 1
+          },
+          "latency_ms": {
+            "median": 3.504400003293995,
+            "p95": 10.108199996466283
+          }
+        },
+        "lighter": {
+          "images": 35,
+          "exact_correct": 32,
+          "exact_accuracy": 0.9142857142857143,
+          "character_accuracy": 0.9857142857142858,
+          "segmentation_failures": 0,
+          "accepted_at_075": 26,
+          "accepted_wrong": 0,
+          "accepted_coverage": 0.7428571428571429,
+          "accepted_error_rate": 0.0,
+          "confusions": {
+            "E->L": 1,
+            "Q->L": 1,
+            "S->C": 1
+          },
+          "latency_ms": {
+            "median": 3.3760000005713664,
+            "p95": 13.776899999356829
+          }
+        }
+      }
+    }
+  },
+  "final_test_summary": {
+    "baseline": {
+      "model_sha256": "587bde77a3db865de1fa1070c479c6dc4df05394d6259d0b1b34cdabfc755e28",
+      "clean": {
+        "images": 34,
+        "exact_correct": 34,
+        "exact_accuracy": 1.0,
+        "character_accuracy": 1.0,
+        "segmentation_failures": 0,
+        "accepted_at_075": 34,
+        "accepted_wrong": 0,
+        "accepted_coverage": 1.0,
+        "accepted_error_rate": 0.0,
+        "confusions": {},
+        "latency_ms": {
+          "median": 3.144599999359343,
+          "p95": 4.401300000608899
+        }
+      },
+      "stress": {
+        "images": 306,
+        "exact_correct": 290,
+        "exact_accuracy": 0.9477124183006536,
+        "character_accuracy": 0.9825708061002179,
+        "segmentation_failures": 2,
+        "accepted_at_075": 293,
+        "accepted_wrong": 6,
+        "accepted_coverage": 0.9575163398692811,
+        "accepted_error_rate": 0.020477815699658702,
+        "confusions": {
+          "M->N": 1,
+          "P->K": 1,
+          "R->K": 1,
+          "R->P": 1,
+          "M->Q": 1,
+          "P->L": 1,
+          "Z->T": 2,
+          "M->W": 1,
+          "B->D": 2,
+          "E->L": 1,
+          "U->T": 1,
+          "R->N": 1,
+          "U->N": 1,
+          "W->N": 1,
+          "K->C": 1,
+          "A->M": 1,
+          "R->Q": 1,
+          "N->U": 1
+        },
+        "latency_ms": {
+          "median": 2.819550001731841,
+          "p95": 3.899499999533873
+        }
+      },
+      "by_variant": {
+        "rotate_minus": {
+          "images": 34,
+          "exact_correct": 34,
+          "exact_accuracy": 1.0,
+          "character_accuracy": 1.0,
+          "segmentation_failures": 0,
+          "accepted_at_075": 34,
+          "accepted_wrong": 0,
+          "accepted_coverage": 1.0,
+          "accepted_error_rate": 0.0,
+          "confusions": {},
+          "latency_ms": {
+            "median": 2.789150003081886,
+            "p95": 3.899499999533873
+          }
+        },
+        "rotate_plus": {
+          "images": 34,
+          "exact_correct": 34,
+          "exact_accuracy": 1.0,
+          "character_accuracy": 1.0,
+          "segmentation_failures": 0,
+          "accepted_at_075": 34,
+          "accepted_wrong": 0,
+          "accepted_coverage": 1.0,
+          "accepted_error_rate": 0.0,
+          "confusions": {},
+          "latency_ms": {
+            "median": 2.7716000004147645,
+            "p95": 3.9447000017389655
+          }
+        },
+        "shear_minus": {
+          "images": 34,
+          "exact_correct": 34,
+          "exact_accuracy": 1.0,
+          "character_accuracy": 1.0,
+          "segmentation_failures": 0,
+          "accepted_at_075": 34,
+          "accepted_wrong": 0,
+          "accepted_coverage": 1.0,
+          "accepted_error_rate": 0.0,
+          "confusions": {},
+          "latency_ms": {
+            "median": 2.8826000016124453,
+            "p95": 3.9466000016545877
+          }
+        },
+        "shear_plus": {
+          "images": 34,
+          "exact_correct": 34,
+          "exact_accuracy": 1.0,
+          "character_accuracy": 1.0,
+          "segmentation_failures": 0,
+          "accepted_at_075": 33,
+          "accepted_wrong": 0,
+          "accepted_coverage": 0.9705882352941176,
+          "accepted_error_rate": 0.0,
+          "confusions": {},
+          "latency_ms": {
+            "median": 2.7826500008814037,
+            "p95": 3.374499996425584
+          }
+        },
+        "narrow": {
+          "images": 34,
+          "exact_correct": 33,
+          "exact_accuracy": 0.9705882352941176,
+          "character_accuracy": 0.9950980392156863,
+          "segmentation_failures": 0,
+          "accepted_at_075": 34,
+          "accepted_wrong": 1,
+          "accepted_coverage": 1.0,
+          "accepted_error_rate": 0.029411764705882353,
+          "confusions": {
+            "Z->T": 1
+          },
+          "latency_ms": {
+            "median": 2.8246000038052443,
+            "p95": 4.044799999974202
+          }
+        },
+        "wide": {
+          "images": 34,
+          "exact_correct": 34,
+          "exact_accuracy": 1.0,
+          "character_accuracy": 1.0,
+          "segmentation_failures": 0,
+          "accepted_at_075": 34,
+          "accepted_wrong": 0,
+          "accepted_coverage": 1.0,
+          "accepted_error_rate": 0.0,
+          "confusions": {},
+          "latency_ms": {
+            "median": 2.9714000011153985,
+            "p95": 3.7919999958830886
+          }
+        },
+        "noise": {
+          "images": 34,
+          "exact_correct": 34,
+          "exact_accuracy": 1.0,
+          "character_accuracy": 1.0,
+          "segmentation_failures": 0,
+          "accepted_at_075": 34,
+          "accepted_wrong": 0,
+          "accepted_coverage": 1.0,
+          "accepted_error_rate": 0.0,
+          "confusions": {},
+          "latency_ms": {
+            "median": 2.8146500008006115,
+            "p95": 3.1350000062957406
+          }
+        },
+        "darker": {
+          "images": 34,
+          "exact_correct": 22,
+          "exact_accuracy": 0.6470588235294118,
+          "character_accuracy": 0.8676470588235294,
+          "segmentation_failures": 2,
+          "accepted_at_075": 26,
+          "accepted_wrong": 4,
+          "accepted_coverage": 0.7647058823529411,
+          "accepted_error_rate": 0.15384615384615385,
+          "confusions": {
+            "M->N": 1,
+            "P->K": 1,
+            "R->K": 1,
+            "R->P": 1,
+            "M->Q": 1,
+            "P->L": 1,
+            "Z->T": 1,
+            "B->D": 2,
+            "E->L": 1,
+            "W->N": 1,
+            "K->C": 1,
+            "A->M": 1,
+            "R->Q": 1,
+            "N->U": 1
+          },
+          "latency_ms": {
+            "median": 2.7993500007141847,
+            "p95": 3.7706000002799556
+          }
+        },
+        "lighter": {
+          "images": 34,
+          "exact_correct": 31,
+          "exact_accuracy": 0.9117647058823529,
+          "character_accuracy": 0.9803921568627451,
+          "segmentation_failures": 0,
+          "accepted_at_075": 30,
+          "accepted_wrong": 1,
+          "accepted_coverage": 0.8823529411764706,
+          "accepted_error_rate": 0.03333333333333333,
+          "confusions": {
+            "M->W": 1,
+            "U->T": 1,
+            "R->N": 1,
+            "U->N": 1
+          },
+          "latency_ms": {
+            "median": 2.7921500004595146,
+            "p95": 3.6029000038979575
+          }
+        }
+      }
+    },
+    "candidate": {
+      "model_sha256": "4ccd8eea47a3a1a9ad366e1a408470d5d807cd3c7c8d31cba2ae31c7116a3e1a",
+      "clean": {
+        "images": 34,
+        "exact_correct": 34,
+        "exact_accuracy": 1.0,
+        "character_accuracy": 1.0,
+        "segmentation_failures": 0,
+        "accepted_at_075": 34,
+        "accepted_wrong": 0,
+        "accepted_coverage": 1.0,
+        "accepted_error_rate": 0.0,
+        "confusions": {},
+        "latency_ms": {
+          "median": 2.844250000634929,
+          "p95": 3.68700000399258
+        }
+      },
+      "stress": {
+        "images": 306,
+        "exact_correct": 300,
+        "exact_accuracy": 0.9803921568627451,
+        "character_accuracy": 0.9929193899782135,
+        "segmentation_failures": 1,
+        "accepted_at_075": 289,
+        "accepted_wrong": 1,
+        "accepted_coverage": 0.9444444444444444,
+        "accepted_error_rate": 0.0034602076124567475,
+        "confusions": {
+          "B->D": 1,
+          "U->T": 1,
+          "N->M": 1,
+          "R->M": 1,
+          "U->N": 1,
+          "W->M": 1,
+          "N->U": 1
+        },
+        "latency_ms": {
+          "median": 2.8419499976735096,
+          "p95": 9.199599997373298
+        }
+      },
+      "by_variant": {
+        "rotate_minus": {
+          "images": 34,
+          "exact_correct": 34,
+          "exact_accuracy": 1.0,
+          "character_accuracy": 1.0,
+          "segmentation_failures": 0,
+          "accepted_at_075": 34,
+          "accepted_wrong": 0,
+          "accepted_coverage": 1.0,
+          "accepted_error_rate": 0.0,
+          "confusions": {},
+          "latency_ms": {
+            "median": 2.782899999147048,
+            "p95": 3.1719999969936907
+          }
+        },
+        "rotate_plus": {
+          "images": 34,
+          "exact_correct": 34,
+          "exact_accuracy": 1.0,
+          "character_accuracy": 1.0,
+          "segmentation_failures": 0,
+          "accepted_at_075": 34,
+          "accepted_wrong": 0,
+          "accepted_coverage": 1.0,
+          "accepted_error_rate": 0.0,
+          "confusions": {},
+          "latency_ms": {
+            "median": 2.8206000024511013,
+            "p95": 3.7529000037466176
+          }
+        },
+        "shear_minus": {
+          "images": 34,
+          "exact_correct": 34,
+          "exact_accuracy": 1.0,
+          "character_accuracy": 1.0,
+          "segmentation_failures": 0,
+          "accepted_at_075": 33,
+          "accepted_wrong": 0,
+          "accepted_coverage": 0.9705882352941176,
+          "accepted_error_rate": 0.0,
+          "confusions": {},
+          "latency_ms": {
+            "median": 2.7674499979184475,
+            "p95": 3.4185999975306913
+          }
+        },
+        "shear_plus": {
+          "images": 34,
+          "exact_correct": 34,
+          "exact_accuracy": 1.0,
+          "character_accuracy": 1.0,
+          "segmentation_failures": 0,
+          "accepted_at_075": 32,
+          "accepted_wrong": 0,
+          "accepted_coverage": 0.9411764705882353,
+          "accepted_error_rate": 0.0,
+          "confusions": {},
+          "latency_ms": {
+            "median": 2.8190499942866154,
+            "p95": 3.4156000037910417
+          }
+        },
+        "narrow": {
+          "images": 34,
+          "exact_correct": 34,
+          "exact_accuracy": 1.0,
+          "character_accuracy": 1.0,
+          "segmentation_failures": 0,
+          "accepted_at_075": 32,
+          "accepted_wrong": 0,
+          "accepted_coverage": 0.9411764705882353,
+          "accepted_error_rate": 0.0,
+          "confusions": {},
+          "latency_ms": {
+            "median": 3.1896500004222617,
+            "p95": 6.199699993885588
+          }
+        },
+        "wide": {
+          "images": 34,
+          "exact_correct": 34,
+          "exact_accuracy": 1.0,
+          "character_accuracy": 1.0,
+          "segmentation_failures": 0,
+          "accepted_at_075": 33,
+          "accepted_wrong": 0,
+          "accepted_coverage": 0.9705882352941176,
+          "accepted_error_rate": 0.0,
+          "confusions": {},
+          "latency_ms": {
+            "median": 2.826750001986511,
+            "p95": 4.842199996346608
+          }
+        },
+        "noise": {
+          "images": 34,
+          "exact_correct": 34,
+          "exact_accuracy": 1.0,
+          "character_accuracy": 1.0,
+          "segmentation_failures": 0,
+          "accepted_at_075": 33,
+          "accepted_wrong": 0,
+          "accepted_coverage": 0.9705882352941176,
+          "accepted_error_rate": 0.0,
+          "confusions": {},
+          "latency_ms": {
+            "median": 2.9046000017842744,
+            "p95": 4.0133000002242625
+          }
+        },
+        "darker": {
+          "images": 34,
+          "exact_correct": 30,
+          "exact_accuracy": 0.8823529411764706,
+          "character_accuracy": 0.9558823529411765,
+          "segmentation_failures": 1,
+          "accepted_at_075": 30,
+          "accepted_wrong": 1,
+          "accepted_coverage": 0.8823529411764706,
+          "accepted_error_rate": 0.03333333333333333,
+          "confusions": {
+            "B->D": 1,
+            "W->M": 1,
+            "N->U": 1
+          },
+          "latency_ms": {
+            "median": 2.928149999206653,
+            "p95": 10.005100004491396
+          }
+        },
+        "lighter": {
+          "images": 34,
+          "exact_correct": 32,
+          "exact_accuracy": 0.9411764705882353,
+          "character_accuracy": 0.9803921568627451,
+          "segmentation_failures": 0,
+          "accepted_at_075": 28,
+          "accepted_wrong": 0,
+          "accepted_coverage": 0.8235294117647058,
+          "accepted_error_rate": 0.0,
+          "confusions": {
+            "U->T": 1,
+            "N->M": 1,
+            "R->M": 1,
+            "U->N": 1
+          },
+          "latency_ms": {
+            "median": 2.8244000022823457,
+            "p95": 11.745200004952494
+          }
+        }
+      }
+    }
+  },
+  "limitations": [
+    "Original model training membership is unknown; these partitions do not establish independent generalization accuracy.",
+    "Historical preprocessing was previously tuned after full-corpus error inspection; retrospective test partition is not pristine.",
+    "All labels originate from filenames. Obvious known label error is quarantined without relabelling.",
+    "New training and all augmentation/cropping must inherit source group split. Validation may select parameters; final test may not.",
+    "No new current-site user-corrected W/N failure example is available in this audit.",
+    "Stress images are synthetic variations, not additional independent real-site samples.",
+    "Confidence threshold is unchanged; model scores are not calibrated correctness probabilities."
+  ],
+  "live_site_accuracy_measured": false
+}

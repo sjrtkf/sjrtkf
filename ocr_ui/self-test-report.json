@@ -1,0 +1,32 @@
+{
+  "passed": true,
+  "scope": "로컬 이미지·숨긴 Tk GUI만 검증. 브라우저·클립보드·자동 입력·저장 없음.",
+  "samples": [
+    {
+      "file": "1I9noN-IXEkYR9IEE2MgSEztugoNPEZoh-WTCNBW_1760687871899.png",
+      "text": "WTCNBW",
+      "valid": true,
+      "confidence": 0.9999638795852661,
+      "elapsed_ms": 39.206200002809055,
+      "image_size": [
+        210,
+        70
+      ],
+      "preview_rendered": true
+    },
+    {
+      "file": "1UIyvnNUOOiu8QQWBClwfVFdL5ahz76xp-TXCBPQ_1760687868172.png",
+      "text": "TXCBPQ",
+      "valid": true,
+      "confidence": 0.9999903440475464,
+      "elapsed_ms": 7.761499997286592,
+      "image_size": [
+        210,
+        70
+      ],
+      "preview_rendered": true
+    }
+  ],
+  "initialization_ms": 33.508999993500765,
+  "window_visible": false
+}

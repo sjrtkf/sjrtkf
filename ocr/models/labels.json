@@ -1,0 +1,30 @@
+{
+  "labels": [
+    "A",
+    "B",
+    "C",
+    "D",
+    "E",
+    "K",
+    "L",
+    "M",
+    "N",
+    "P",
+    "Q",
+    "R",
+    "S",
+    "T",
+    "U",
+    "W",
+    "X",
+    "Z"
+  ],
+  "input_shape": [
+    null,
+    28,
+    28,
+    1
+  ],
+  "normalization": "float32 / 255",
+  "source": "Static inspection of user-owned label_binarizer.pkl, not executed"
+}

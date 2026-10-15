@@ -1,0 +1,21 @@
+{
+  "name": "baseball-ticket-helper",
+  "version": "0.9.5",
+  "private": true,
+  "description": "일반 Chrome과 연결하는 야구 티켓팅 보조 Windows 패널",
+  "main": "src/chrome-main.js",
+  "scripts": {
+    "probe": "electron src/request-probe.js",
+    "probe:test": "electron src/request-probe.js --probe-smoke",
+    "build:extension": "node extension/build.js",
+    "start": "npm run build:extension && electron .",
+    "test": "node --test tests/*.test.js",
+    "smoke": "npm run build:extension && electron . --panel-smoke",
+    "package": "npm run build:extension && node scripts/package-helper.cjs",
+    "postpackage": "node scripts/copy-extension.cjs"
+  },
+  "devDependencies": {
+    "@electron/packager": "^20.3.0",
+    "electron": "^44.3.0"
+  }
+}
