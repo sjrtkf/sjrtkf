@@ -3,8 +3,8 @@ const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const {buildPreflight,diagnosisForRun,observerDiagnosis,phaseForStatus,seatExtensionCompatible}=require('../src/run-inspection');
 test('letter-row and diagnostic support require the updated extension version',()=>{
-  for(const version of [null,'0.9.17','0.9.16','0.9.15','0.9.12','0.9.11','0.9.9','0.9.3','0.8.9','invalid'])assert.equal(seatExtensionCompatible(version),false);
-  for(const version of ['0.9.18','0.10.0','1.0.0'])assert.equal(seatExtensionCompatible(version),true);
+  for(const version of [null,'0.9.19','0.9.18','0.9.17','0.9.16','0.9.15','0.9.12','0.9.11','0.9.9','0.9.3','0.8.9','invalid'])assert.equal(seatExtensionCompatible(version),false);
+  for(const version of ['0.9.20','0.10.0','1.0.0'])assert.equal(seatExtensionCompatible(version),true);
   const report=buildPreflight({connected:true,target:true,pageStage:'seat',networkHealthy:true,extensionVersion:'0.9.3'});
   assert.equal(report.canStart,false);assert.equal(report.checks.find(c=>c.id==='extension').level,'error');
 });

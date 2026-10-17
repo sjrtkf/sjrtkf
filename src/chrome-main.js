@@ -273,6 +273,17 @@ function onBrowserEvent(event){
       return;
     }
     if(run.kind!=='auto')return;
+    if(e.queueKind){
+      if(run.targetId!==wc.id)return;
+      run.queueObservations??=new Map();
+      if(e.kind==='request')run.queueObservations.set(wc.id+':'+e.seq,true);
+      else if(run.queueObservations.delete(wc.id+':'+e.seq)){
+        const outcome=e.kind==='failed'?'unconfirmed':e.outcome||'unconfirmed';
+        if(e.seq>=(run.entry.queueSeq||0)){run.entry.queueSeq=e.seq;run.entry.queueState=outcome;run.entry.queueRank=Number.isSafeInteger(e.rank)?e.rank:null;}
+        runLog.event('queue-response',{stage:e.queueKind,result:outcome,message:e.code,status:e.status,durationMs:e.durationMs,timing:e.timing,rank:e.rank});
+      }
+      return;
+    }
     const key=wc.id+':'+e.seq;
     if(e.kind==='request'){
       if(run.targetId!==wc.id)return;
@@ -282,7 +293,7 @@ function onBrowserEvent(event){
       if(e.kind==='finished')run.entry.receivedCount++;
       if(e.kind==='failed')run.entry.failedCount++;
       if(Number.isFinite(e.durationMs))run.entry.lastRequestDurationMs=e.durationMs;
-      if(e.outcome){run.entry.httpOutcome=e.outcome;run.entry.httpCode=e.code;runLog.event('entry-response',{result:e.outcome,message:e.code,status:e.status,durationMs:e.durationMs});}
+      if(e.outcome){run.entry.httpOutcome=e.outcome;run.entry.httpCode=e.code;runLog.event('entry-response',{result:e.outcome,message:e.code,status:e.status,durationMs:e.durationMs,timing:e.timing});}
     }
     state();
   }else if(['error','metadata-error','observer-error'].includes(event.type)){runLog.event('browser-error',{kind:event.type,message:event.message});state(event.message||'Chrome 좌석 정보 연결을 확인해 주세요.');}
@@ -397,6 +408,9 @@ function rememberGate(run,status){
   if(status.trigger)run.entry.trigger=status.trigger;
   if(status.clock?.outcome&&status.clock.outcome!=='not-configured')run.entry.clockOutcome=status.clock.outcome;
   if(Number.isFinite(status.clock?.uncertaintyMs))run.entry.clockUncertaintyMs=status.clock.uncertaintyMs;
+  const sample={attempts:status.attempts,invokeDelayMs:status.invokeDelayMs,requestDelayMs:status.requestDelayMs,timerDelayMs:status.clock?.delayMs};
+  const key=JSON.stringify(sample);
+  if(key!==run.lastGateTiming&&Object.values(sample).some(Number.isFinite)){run.lastGateTiming=key;runLog.event('entry-trigger',{count:sample.attempts,...sample});}
 }
 function pinGateDocument(run,wc){
   const doc={windowId:wc.id,version:scopeVersions.get(wc.id)};
@@ -408,14 +422,14 @@ async function scheduleGateClock(run,wc,status){
   const monoNow=performance.now(),estimate=clockForGate(clockInfo,{monoNow});
   const plannedServerNow=estimate?.serverNowMs??Date.now()+(clockInfo?.offsetMs||0);
   // Refresh before opening in the background; never block the activation observer on a clock fetch.
-  if(run.openAt-plannedServerNow<=45000&&run.openAt-plannedServerNow>=-5000&&!run.clockTask&&(run.lastClockRefresh==null||monoNow-run.lastClockRefresh>=30000)){
+  if(run.openAt-plannedServerNow<=45000&&run.openAt-plannedServerNow>=-60000&&!run.clockTask&&(run.lastClockRefresh==null||monoNow-run.lastClockRefresh>=30000)){
     run.lastClockRefresh=monoNow;
-    run.clockTask=syncClock().catch(()=>{if(runs.current===run){run.entry.clockReason='서버 시각 조회 실패 · 활성화 감지를 유지합니다.';state();}}).finally(()=>{run.clockTask=null;});
+    run.clockTask=syncClock().catch(()=>{if(runs.current===run){run.entry.clockReason='서버 시각 조회 실패 · 예약 진입을 보류합니다. 활성화 감지 방식으로 다시 시작할 수 있습니다.';state();}}).finally(()=>{run.clockTask=null;});
   }
-  if(!estimate&&run.openAt+(run.entry.offsetMs||0)+1000<plannedServerNow&&!run.clockTask)throw Error('예약 진입 구간이 지났거나 유효한 서버 시각이 없습니다. 이미 열린 경기에는 활성화 감지 방식을 선택해 주세요.');
-  if(!estimate){run.entry.clockReason=run.clockTask?'최근 서버 시각 조회 중 · 활성화 감지를 유지합니다.':'시각 표본이 없거나 만료/대체/오차 초과 · 활성화 감지를 유지합니다.';if(!run.clockTask)run.entry.clockOutcome='fallback';return;}
+  if(!estimate&&run.openAt+(run.entry.offsetMs||0)+60000<plannedServerNow&&!run.clockTask)throw Error('유효한 서버 시각을 확인하지 못했습니다. 활성화 감지 방식으로 다시 시작해 주세요.');
+  if(!estimate){run.entry.clockReason=run.clockTask?'최근 서버 시각 조회 중 · 예약 진입 보류':'유효한 시각 표본이 없어 예약 진입을 보류합니다.';if(!run.clockTask)run.entry.clockOutcome='waiting-sync';return;}
   const offsetMs=run.entry.offsetMs||0;
-  if(estimate.validForMs<run.openAt+offsetMs+1000-estimate.serverNowMs||run.clockAppliedAnchor===clockInfo.anchorMonoMs)return;
+  if(estimate.validForMs<run.openAt+offsetMs-estimate.serverNowMs||run.clockAppliedAnchor===clockInfo.anchorMonoMs)return;
   const sample=clockInfo,before=performance.now(),scope=scopeVersions.get(wc.id),url=wc.getURL();
   const page=await readEntryPage(run,wc,'pageClock');const after=performance.now();
   if(page===ENTRY_READ_MOVED)return;
@@ -425,7 +439,7 @@ async function scheduleGateClock(run,wc,status){
   const roundTrip=after-before,atPage=clockForGate(sample,{monoNow:(before+after)/2});
   if(!atPage||!Number.isFinite(pageMono)||typeof page.documentId!=='string'||roundTrip>250||atPage.uncertaintyMs+roundTrip/2>501)return;
   const installed=await runJs(run,wc,entry.setGateClock,{runId:run.id,goodsCode:run.goodsCode,documentId:page.documentId,source:'ticket-server',openAt:run.openAt,deadlineMono:pageMono+run.openAt-atPage.serverNowMs+offsetMs,validUntilMono:pageMono+atPage.validForMs-roundTrip/2,uncertaintyMs:atPage.uncertaintyMs+roundTrip/2});
-  if(installed){run.clockAppliedAnchor=sample.anchorMonoMs;run.entry.clockOutcome='armed';run.entry.clockReason='예약 시각 ±1초 · 30ms 최소 간격 · 명시적 미개방 응답만 재시도합니다.';}
+  if(installed){run.clockAppliedAnchor=sample.anchorMonoMs;run.entry.clockOutcome='armed';run.entry.clockReason='예약 시각과 사이트 활성화를 확인해 진입합니다. 요청이 발생하지 않은 경우만 재확인합니다.';}
 }
 async function games(){
   const wc=current();if(!isEntryPage(wc.getURL()))throw new Error('Chrome에서 NOL 경기 목록 페이지를 먼저 열어 주세요.');
@@ -672,9 +686,8 @@ function launch(run,task){
 }
 async function startRun(payload){
   const extensionVersion=bridge.getState().extensionVersion;
-  if(!payload?.inspectionOnly&&extensionVersion!==undefined&&!seatExtensionCompatible(extensionVersion))throw Error('좌석 진행 개선에는 v0.9.18 이상 Chrome 확장이 필요합니다. 새 배포 폴더의 chrome-extension을 등록하고 다시 연결해 주세요.');
+  if(extensionVersion!==undefined&&!seatExtensionCompatible(extensionVersion))throw Error('진입 계측과 중복 방지에는 v0.9.20 이상 Chrome 확장이 필요합니다. 확장 업데이트 적용 후 다시 연결해 주세요.');
   if(bridge.getState().bookingNoticeSupported===false)throw Error('예매 안내를 처리하려면 v0.9 폴더의 chrome-extension을 등록하고 새 코드로 다시 연결해 주세요.');
-  if(payload?.entryStrategy==='clock'&&extensionVersion!==undefined){const v=String(extensionVersion).split('.').map(Number);if(v.length!==3||v.some(n=>!Number.isInteger(n))||v[0]===0&&(v[1]<9||v[1]===9&&v[2]<19))throw Error('조건부 HTTP 진입에는 v0.9.19 이상 확장이 필요합니다. 도우미의 확장 업데이트를 실행해 주세요.');}
   const requestedPreferences=normalizePreferences(payload?.preferences||preferences);
   if(extensionVersion!==undefined&&!/^0\.9\.(?:[7-9]|[1-9]\d+)$/.test(String(extensionVersion)))throw Error('경기 식별 검증에는 v0.9.7 Chrome 확장이 필요합니다.');
   if(requestedPreferences.stopAfterCaptcha&&extensionVersion!==undefined){
@@ -848,7 +861,10 @@ async function autoLoop(run){
     const knownRoute=/^https:\/\/tickets\.interpark\.com\/(?:waiting(?:[/?#]|$)|gates\/ticket\/\d+)/.test(url)||url.startsWith('https://accounts.yanolja.com/')||isEntryPage(url)||liveAdapter.supportedUrl(url)||wc.isDemo()||url==='about:blank';
     if(knownRoute)run.unsupportedSince=null;
     if(/^https:\/\/tickets\.interpark\.com\/(?:onestop\/|waiting\/)?error(?:[/?#]|$)/.test(url))throw Error('사이트가 예매 오류 화면으로 이동했습니다. 진입 요청을 반복하지 않았습니다.');
-    if(/^https:\/\/tickets\.interpark\.com\/waiting(?:[/?#]|$)/.test(url))setRunStatus(run,'대기열 진입 · 기존 순서를 유지하며 대기');
+    if(/^https:\/\/tickets\.interpark\.com\/waiting(?:[/?#]|$)/.test(url)){
+      const q=run.entry.queueState;
+      setRunStatus(run,q==='rank-confirmed'?'대기열 순번 확인 · '+run.entry.queueRank:q==='registered'?'대기열 접수 확인 · 순번 응답 대기':q==='existing-queue'?'기존 대기열 선택 안내 · 사이트에서 확인해 주세요':q==='blocked'?'대기열 요청 제한 · 새 진입 요청 없이 대기':q==='unconfirmed'?'대기열 응답 미확인 · 사이트의 후속 응답 대기':'대기열 페이지 도착 · 실제 접수와 순번 확인 중');
+    }
     else if(url.startsWith('https://accounts.yanolja.com/'))setRunStatus(run,'로그인 대기 · 사이트에서 직접 로그인해 주세요.');
     else if(/^https:\/\/tickets\.interpark\.com\/gates\/ticket\/\d+/.test(url)){
       pinGateDocument(run,wc);
@@ -867,18 +883,18 @@ async function autoLoop(run){
       if(status===ENTRY_READ_MOVED)continue;
       if(run.targetId!==wc.id||wc.missingSince!=null||wc.getURL()!==url)continue;
       if((!status||status.phase==='stopped'||status.runId!==run.id)&&!run.entry.trigger&&!run.entry.requestCount)status=await runJs(run,wc,entry.armGate,{goodsCode:run.goodsCode,runId:run.id,allowInitiallyEnabled:true,httpRetry:run.entry.strategy==='clock'&&run.clockEligible,timeoutMs:Math.max(60000,(run.openAt||Date.now())-Date.now()+30*60000)});
-      else if(status?.phase==='timeout'||status?.phase==='blocked')throw Error('예매 준비 화면의 활성화를 확인하지 못했습니다.');
+      else if(status?.phase==='timeout'||status?.phase==='blocked')throw Error(status.reason||'예매 준비 화면의 활성화를 확인하지 못했습니다.');
       rememberGate(run,status);
       if(status?.http){
         const h=status.http;run.entry.httpOutcome=h.outcome;run.entry.httpCode=h.code;
         const key=h.requestCount+':'+h.outcome+':'+h.code;
         if(run.lastEntryHttp!==key){run.lastEntryHttp=key;runLog.event('entry-http',{result:h.outcome,message:h.code,count:h.requestCount,status:h.httpStatus});}
-        if(['blocked','unknown','expired'].includes(h.outcome))throw Error(({blocked:'서버가 진입 요청을 거절했습니다.',unknown:'서버의 진입 처리 결과를 확정하지 못했습니다.',expired:'설정한 진입 재시도 구간이 끝났습니다.'})[h.outcome]+' ['+h.code+'] 추가 요청 없이 중지했습니다.');
+        if(['blocked','unknown','expired','not-open'].includes(h.outcome))throw Error(({blocked:'서버가 진입 요청을 거절했습니다.',unknown:'서버의 진입 처리 결과를 확정하지 못했습니다.',expired:'설정한 진입 재시도 구간이 끝났습니다.','not-open':'미개방 코드가 반환되었습니다. 진입 API의 재시도 조건은 아직 검증되지 않았습니다.'})[h.outcome]+' ['+h.code+'] 추가 요청 없이 중지했습니다.');
       }
       if(run.targetId!==wc.id||wc.missingSince!=null||wc.getURL()!==url)continue;
       await scheduleGateClock(run,wc,status);
       if(run.targetId!==wc.id||wc.missingSince!=null||wc.getURL()!==url)continue;
-      if(run.entry.trigger||run.entry.requestCount){run.entryDispatchedAt??=Date.now();if(Date.now()-run.entryDispatchedAt>10000)throw Error('진입 클릭/요청 이후 화면 이동을 확인하지 못했습니다. 중복 실행하지 않고 중지합니다.');}
+      if(run.entry.trigger||run.entry.requestCount){run.entryDispatchedAt??=Date.now();if(Date.now()-run.entryDispatchedAt>45000)throw Error('진입 요청 이후 화면 이동을 확인하지 못했습니다. 중복 실행하지 않고 중지합니다.');}
       if(gate.enabled&&status?.observedDisabled===false&&!status?.http&&status?.clock?.outcome!=='armed'){run.awaitingAutoAt??=Date.now();if(Date.now()-run.awaitingAutoAt>10000)throw Error('이미 열린 준비 화면에서 사이트의 자동 진입을 확인하지 못했습니다. 예매 화면을 직접 확인해 주세요.');}
       setRunStatus(run,gate.enabled?'예매 버튼 활성화 확인 · 진입 중':'예매 준비 완료 · 사이트가 버튼을 열 때까지 대기');
     }

@@ -22,6 +22,19 @@ function fixture(parserOverrides={}){
 }
 const select=(id='A')=>({url:'https://tickets.interpark.com/onestop/gql',method:'POST',postData:JSON.stringify({operationName:'PreselectSeat',query:'mutation PreselectSeat($command: PreselectSeatCommand!) { preselectSeat(command:$command) }',variables:{command:{seatInfoId:id,sessionId:'secret-session'}}})});
 const grade=(playSeq='001')=>({url:'https://tickets.interpark.com/onestop/gql',method:'POST',postData:JSON.stringify({operationName:'GetRemainSeats',query:'query GetRemainSeats($input:GetRemainSeatSortInput){ getRemainSeats(input:$input){ seatGrade seatGradeName } }',variables:{input:{playSeq}}})});
+
+test('queue result and CDP timings are sanitized and old-document responses discarded',async()=>{
+ const f=fixture();await f.observer.attach(9);
+ f.responses.set('q',{body:'{"waitingId":"secret-key"}'});
+ f.request('q',{url:'https://ent-waiting-api.interpark.com/waiting/api/line-up',method:'POST',postData:'secret'});
+ f.chrome.debugger.onEvent.emit(source,'Network.responseReceived',{requestId:'q',response:{status:200,connectionReused:true,timing:{sendEnd:1,receiveHeadersStart:21}}});
+ f.chrome.debugger.onEvent.emit(source,'Network.loadingFinished',{requestId:'q',timestamp:1.05,encodedDataLength:20});await tick();
+ const e=f.events.find(e=>e.type==='entry'&&e.event.kind==='finished').event;
+ assert.equal(e.queueKind,'line-up');assert.equal(e.outcome,'registered');assert.equal(e.timing.firstByteMs,20);assert.equal(JSON.stringify(f.events).includes('secret'),false);
+ let resolve;f.responses.set('oldq',new Promise(r=>resolve=r));f.request('oldq',{url:'https://ent-waiting-api.interpark.com/waiting/api/rank?waitingId=secret',method:'GET'});f.finish('oldq');
+ f.chrome.webNavigation.onCommitted.emit({tabId:9,frameId:0,url:'https://tickets.interpark.com/waiting',documentId:'new'});resolve({body:'{"myRank":1}'});await tick();
+ assert.equal(f.events.filter(e=>e.type==='entry'&&e.event.outcome==='rank-confirmed').length,0);
+});
 test('only explicitly selected supported ticket tabs can attach; missing observation is unhealthy',async()=>{
  const f=fixture();assert.equal(f.observer.snapshot(9).healthy,false);
  f.setUrl('https://accounts.interpark.com/login');await assert.rejects(f.observer.attach(9),/지원하는/);assert.equal(f.commands.length,0);

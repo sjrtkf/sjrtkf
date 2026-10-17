@@ -248,14 +248,14 @@ function showClock(c){
   const measured=Number.isFinite(c.measuredAt)?new Date(c.measuredAt).toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit',second:'2-digit',timeZone:'Asia/Seoul'})+' 측정. ':'';
   $('clockHint').textContent=measured+(c.source==='ticket-server'?'사이트 시계를 읽은 당시의 차이입니다. 시험 방식은 예매 시작이 가까워지면 다시 확인합니다.':'예매 서버 시계를 읽지 못해 일반 웹 응답으로 추정했습니다. 이 값으로 정시 클릭을 예약하지 않습니다.');
 }
-const clockOutcomeLabel=value=>({'not-configured':'사용 안 함','waiting-sync':'시각 확인 중','armed':'예약됨','not-ready':'예정 시각에 준비되지 않음 · 활성화 감지 유지','stale':'시각 정보 만료 · 활성화 감지로 진행','clicked':'클릭 전달','fallback':'기본 활성화 감지로 진행'}[value]||'미확인');
+const clockOutcomeLabel=value=>({'not-configured':'사용 안 함','waiting-sync':'시각 확인 중','armed':'예약됨','not-ready':'예정 시각에 준비되지 않음 · 활성화 감지 유지','stale':'시각 정보 만료 · 활성화 감지로 진행','clicked':'함수 실행','fallback':'기본 활성화 감지로 진행'}[value]||'미확인');
 function showEntryMode(){
   if(targetIsSeat()){$('entryMode').textContent='이미 열린 좌석 화면에서 시작합니다. 시작 버튼을 누르면 현재 화면과 선택 상태부터 확인하며 예매 진입 요청이나 오픈 시각 예약은 실행하지 않습니다.';return;}
   if(running&&currentEntry){
-    $('entryMode').textContent=currentEntry.strategy==='clock'?'이번 작업: 서버 시각 + 활성화 감지. '+(currentEntry.clockReason||'실제 활성화된 버튼을 한 번만 클릭합니다.'):'이번 작업: 사이트 활성화 감지. 사이트가 예매 버튼을 활성화하면 한 번 클릭합니다.';
+    $('entryMode').textContent=currentEntry.strategy==='clock'?'이번 작업: 서버 시각 + 활성화 감지. '+(currentEntry.clockReason||'사이트 활성화 후 진입 함수를 실행합니다.'):'이번 작업: 사이트 활성화 감지. 사이트가 예매 버튼을 활성화하면 진입 함수를 실행합니다.';
     return;
   }
-  $('entryMode').textContent=targetIsGate()?'현재 준비 화면에서 시작합니다. 공식 시각으로 되돌리기로 포스트시즌 시작 시각을 읽거나 예약 시각을 직접 입력하세요.':$('entryStrategy').value==='clock'?'서버 기준 예약 시각 ±1초 동안 HTTP 진입을 시도합니다. 최소 간격 30ms, 동시 요청 1개이며 명시적 미개방 응답만 재시도합니다.':'로그인 후 예매 준비 화면에 미리 들어가고, 예매 버튼이 활성화되면 진입 함수를 한 번 실행합니다.';
+  $('entryMode').textContent=targetIsGate()?'현재 준비 화면에서 시작합니다. 공식 시각으로 되돌리기로 포스트시즌 시작 시각을 읽거나 예약 시각을 직접 입력하세요.':$('entryStrategy').value==='clock'?'보정한 예약 시각과 사이트 활성화를 모두 확인하여 진입합니다. 요청이 발생하지 않은 경우만 다시 확인하며, 느린 응답에는 중복 전송하지 않습니다.':'로그인 후 예매 준비 화면에 미리 들어가고, 예매 버튼이 활성화되면 진입 함수를 한 번 실행합니다.';
 }
 function currentPreflightFingerprint(){
   return JSON.stringify({preferences:readPrefs(),inspectionOnly:$('inspectionOnly').checked,connected:browserConnected,target:currentTargetId,url:currentTargetUrl,game:$('game').value,openAt:$('openAt').value,strategy:$('entryStrategy').value,offset:$('entryOffsetMs').value});
@@ -306,7 +306,7 @@ function showLastRun(record){
     const trigger={'server-clock':'서버 시각 예약','activation':'사이트 활성화 감지'}[entry.trigger]||'없음';
     const outcome=clockOutcomeLabel(entry.clockOutcome);
     const count=n=>Number.isInteger(n)&&n>=0?n:0;
-    const lines=['진입 방식: '+(entry.strategy==='current-seat'?'열린 좌석 화면에서 시작 · 새 진입 요청 없음':entry.strategy==='clock'?'서버 시각 + 활성화 감지':'사이트 활성화 감지'),'클릭 전달 계기: '+trigger,'서버 시각 예약: '+outcome];
+    const lines=['진입 방식: '+(entry.strategy==='current-seat'?'열린 좌석 화면에서 시작 · 새 진입 요청 없음':entry.strategy==='clock'?'서버 시각 + 활성화 감지':'사이트 활성화 감지'),'진입 실행 계기: '+trigger,'서버 시각 예약: '+outcome];
     if(entry.clockReason)lines.push(String(entry.clockReason));
     if(Number.isFinite(entry.clockUncertaintyMs))lines.push('시각 추정 불확실성: 약 ±'+Math.ceil(entry.clockUncertaintyMs)+'ms');
     lines.push('진입 요청 관찰 '+count(entry.requestCount)+'건 · 응답 수신 완료 '+count(entry.receivedCount)+'건 · 전송 실패 '+count(entry.failedCount)+'건');

@@ -12,6 +12,9 @@ const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypt
   const noClick=JSON.parse(fs.readFileSync(path.join(root,'work/no-click-smoke.json'),'utf8'));
   if(!noClick.passed||!noClick.minimized||noClick.domInputEvents!==0||noClick.captchaVerifications!==2||noClick.destination!=='/payment')throw Error('최소화·클릭 없는 전체 흐름 검증이 필요합니다.');
   report.noClickFlow=noClick;
+  const entry=JSON.parse(fs.readFileSync(path.join(root,`work/entry-http-smoke-v${version}.json`),'utf8'));
+  if(!entry.passed||entry.checks.length<6)throw Error('진입 지연·중복·중지 검증이 필요합니다.');
+  report.entry=entry;
   const connection=JSON.parse(fs.readFileSync(path.join(root,'work/connection-smoke.json'),'utf8'));
   if(!connection.passed||!connection.separateProcessRestart||!connection.windowsEncryptedStorage||!connection.revocationPassed)throw Error('자동 재연결·암호화 저장 검증이 필요합니다.');
   report.connection=connection;

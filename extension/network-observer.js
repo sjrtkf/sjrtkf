@@ -43,7 +43,9 @@
       const status = overrideStatus ?? r.statusCode;
       if (Number.isInteger(status) && status >= 100 && status <= 599) event.status=status;
       if (Number.isFinite(p.timestamp) && Number.isFinite(r.startedAt) && p.timestamp >= r.startedAt) event.durationMs=(p.timestamp-r.startedAt)*1000;
-      if(verdict){event.outcome=verdict.outcome;event.code=verdict.code;}
+      if(r.queueKind)event.queueKind=r.queueKind;
+      if(r.timing)event.timing=r.timing;
+      if(verdict){event.outcome=verdict.outcome;event.code=verdict.code;if(Number.isSafeInteger(verdict.rank))event.rank=verdict.rank;}
         publish({type:'entry',tabId:s.tabId,event});
     }
     function lost(s, reason = 'unknown', detachReason) {
@@ -101,6 +103,8 @@
         let record;
         if (parsers.entryNetwork.isEntryRequest(request)) {
           record={category:'entry',seq:++s.entrySequence,startedAt:p.timestamp};
+        } else if (parsers.entryNetwork.queueRequest?.(request)) {
+          record={category:'entry',queueKind:parsers.entryNetwork.queueRequest(request),seq:++s.entrySequence,startedAt:p.timestamp};
         } else if (parsers.metadata.metadataUrl(request.url) && request.method==='GET') {
           record={category:'metadata'};
         } else {
@@ -116,12 +120,12 @@
         if (!record) return;
         if (s.pending.size>=1024) {lost(s,'pending-overflow');return;}
         s.pending.set(id,{...record,generation:s.generation,statusCode:0});
-        if (record.category==='entry') publish({type:'entry',tabId:s.tabId,event:{kind:'request',atMono:now(),seq:record.seq}});
+        if (record.category==='entry') publish({type:'entry',tabId:s.tabId,event:{kind:'request',atMono:now(),seq:record.seq,...(record.queueKind?{queueKind:record.queueKind}:{})}});
         if (record.category==='seat') sendSnapshot(s.tabId);
         return;
       }
       const record=s.pending.get(id);if (!record) return;
-      if (method==='Network.responseReceived') {record.statusCode=p.response?.status || 0;return;}
+      if (method==='Network.responseReceived') {record.statusCode=p.response?.status || 0;if(record.category==='entry')record.timing=parsers.entryNetwork.networkTiming?.(p.response);return;}
       if (method==='Network.loadingFailed') {
         if (record.category==='seat') finishSeat(s,id,{status:'uncertain',seatIds:[]});
         else if (record.category==='entry') finishEntry(s,id,'failed',p);
@@ -131,7 +135,7 @@
       if (method!=='Network.loadingFinished') return;
       if (record.category==='entry') {
         const generation=s.generation;let verdict={outcome:'unknown',code:'BODY_UNAVAILABLE'};
-        try{if(p.encodedDataLength>65536)throw Error();const raw=await chrome.debugger.sendCommand({tabId:s.tabId},'Network.getResponseBody',{requestId:id});verdict=parsers.entryNetwork.classifyEntryResponse(record.statusCode,decodeBody(raw,65536));}catch{}
+        try{if(p.encodedDataLength>65536)throw Error();const raw=await chrome.debugger.sendCommand({tabId:s.tabId},'Network.getResponseBody',{requestId:id});const body=decodeBody(raw,65536);verdict=record.queueKind?parsers.entryNetwork.queueResponse(record.queueKind,record.statusCode,body):parsers.entryNetwork.classifyEntryResponse(record.statusCode,body);}catch{}
         if(current(s,generation)&&s.pending.get(id)===record)finishEntry(s,id,'finished',p,undefined,verdict);return;
       }
       const generation=s.generation;

@@ -15,7 +15,8 @@ app.whenReady().then(async()=>{
   assert.ok(['https://nol.yanolja.com','https://tickets.interpark.com','https://ent-waiting-api.interpark.com'].includes(u.origin));
   if(['/ticket/genre/sports/test','/gates/ticket/26009123','/waiting','/onestop/seat'].includes(p))return new Response(html,{headers:{'Content-Type':'text/html; charset=utf-8'}});
   const body=request.method==='POST'?await request.json():null;requests.push({path:p,operation:body?.operationName});let result;
-  if(['/fixture/preparation','/waiting/api/secure-url'].includes(p))result={ok:true};
+  if(p==='/fixture/preparation')result={ok:true};
+  else if(p==='/waiting/api/secure-url')result={redirectUrl:'https://tickets.interpark.com/waiting'};
   else if(p==='/onestop/api/captcha/image')result={sequence:++images};
   else if(p==='/onestop/api/captcha/verify')result={result:++verifications===1?'N':'Y'};
   else if(p==='/onestop/api/seatMeta')result=[{blockKey:'001:101',seats:records}];

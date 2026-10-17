@@ -6,7 +6,8 @@ const MAX_BYTES=1024*1024,MAX_FILES=30;
 function safeDetail(input={}){
   const out={};
   for(const key of ['action','stage','message','pageStage','kind','result'])if(typeof input[key]==='string')out[key]=safeText(input[key],500);
-  for(const key of ['elapsedMs','durationMs','status','count','duplicateCount','blockCount','gradeCount','conflictCount','selectedCount','candidateCount'])if(Number.isFinite(input[key])&&input[key]>=0)out[key]=input[key];
+  for(const key of ['elapsedMs','durationMs','status','count','duplicateCount','blockCount','gradeCount','conflictCount','selectedCount','candidateCount','rank','invokeDelayMs','requestDelayMs','timerDelayMs'])if(Number.isFinite(input[key])&&input[key]>=0)out[key]=input[key];
+  if(input.timing){out.timing={};for(const key of ['dnsMs','connectMs','tlsMs','firstByteMs'])if(Number.isFinite(input.timing[key])&&input.timing[key]>=0&&input.timing[key]<=3600000)out.timing[key]=input.timing[key];for(const key of ['connectionReused','timingAvailable'])if(typeof input.timing[key]==='boolean')out.timing[key]=input.timing[key];}
   if(Array.isArray(input.gradeConflicts))out.gradeConflicts=input.gradeConflicts.slice(0,30).map(g=>({code:safeText(g.code,100),names:(Array.isArray(g.names)?g.names:[]).slice(0,8).map(n=>safeText(n,300))}));
   if(input.summary)out.summary=safeLastRun(input.summary);
   if(input.preferences){

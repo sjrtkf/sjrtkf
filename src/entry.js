@@ -115,11 +115,13 @@ function armGate({goodsCode,runId=null,timeoutMs=15*86400000,httpRetry=false,all
   prior?.stop();
   const startPath=location.pathname,started=performance.now();
   const status={phase:'armed',documentId:String(performance.timeOrigin)+':'+started,goodsCode:String(goodsCode),runId,clickedAt:null,trigger:null,observedDisabled:false,clock:{outcome:'not-configured'},reason:'사이트의 예매 버튼 활성화를 기다립니다.'};
-  let observer,timer,clockTimer,http,done=false;
+  let observer,timer,clockTimer,http,done=false,inFlight=false,retryAt=0,attempts=0;
   const stop=()=>{done=true;clearTimeout(timer);clearTimeout(clockTimer);observer?.disconnect();http?.stop();if(['armed','http-running'].includes(status.phase))status.phase='stopped';};
   const visible=e=>{const r=e.getBoundingClientRect();const css=getComputedStyle(e);return r.width>0&&r.height>0&&css.visibility!=='hidden'&&css.display!=='none';};
   const tick=(source='activation')=>{
     if(done||status.phase==='http-running')return;clearTimeout(timer);
+    if(inFlight)return;
+    if(performance.now()<retryAt){timer=setTimeout(tick,retryAt-performance.now());return;}
     if(location.origin!=='https://tickets.interpark.com'||location.pathname!==startPath){status.phase='navigated';stop();return;}
     if(performance.now()-started>timeoutMs){status.phase='timeout';stop();return;}
     const root=document.querySelector('main');
@@ -130,21 +132,23 @@ function armGate({goodsCode,runId=null,timeoutMs=15*86400000,httpRetry=false,all
     const button=prepared&&buttons.length===1?buttons[0]:null;
     if(button&&!blocked&&(button.disabled||button.getAttribute('aria-disabled')==='true'))status.observedDisabled=true;
     if(httpRetry&&status.clock.outcome==='not-configured'){timer=setTimeout(tick,250);return;}
-    const firstAt=status.clock.deadlineMono-(httpRetry?1000:0);
+    const firstAt=status.clock.deadlineMono;
     if(status.clock.outcome==='armed'&&performance.now()<firstAt){timer=setTimeout(tick,Math.min(250,firstAt-performance.now()));return;}
-    if(httpRetry&&button&&!blocked&&Number.isFinite(firstAt)&&performance.now()<=status.clock.deadlineMono+1000){
-      const control=window.__ticketSiteCode,epoch=control?.epoch,connection=control?.connection;
-      const assertActive=()=>{if(done||location.pathname!==startPath||window.__ticketSiteCode!==control||control?.epoch!==epoch||control?.connection!==connection||control?.stopped||Date.now()>control?.leaseUntil)throw Error('SITE_CODE_STOPPED');};
-      http=createEntryHttp({startMono:firstAt,endMono:status.clock.deadlineMono+1000,intervalMs:30,assertActive,onStatus:value=>{status.http=value;}});
-      status.http=http.status;status.phase='http-running';status.trigger='server-clock';status.clickedAt=Date.now();status.clock.outcome='http-running';
-      clearTimeout(timer);clearTimeout(clockTimer);observer?.disconnect();
-      try{const pending=siteInvoke(button,'entry');if(pending&&typeof pending.then==='function')pending.finally(()=>http.dispose()).catch(()=>{});}catch(error){http.stop();http.dispose();throw error;}return;
-    }
-    if(httpRetry&&performance.now()>status.clock.deadlineMono+1000){status.phase='blocked';status.reason='예약 진입 구간을 놓쳤습니다. 새 요청 없이 중지합니다.';stop();return;}
     if(button&&!blocked&&!button.disabled&&button.getAttribute('aria-disabled')!=='true'&&button.textContent.trim()==='예매하기'&&(status.observedDisabled||allowInitiallyEnabled)){
       // Both triggers acquire this latch synchronously, before dispatching.
       // A delivered DOM click is not evidence of an accepted server request.
-      status.phase='clicked';status.trigger=source==='server-clock'?'server-clock':'activation';status.clickedAt=Date.now();status.clickedMono=performance.now();if(status.trigger==='server-clock')status.clock.outcome='clicked';status.reason='사이트의 활성화된 진입 함수를 한 번 실행했습니다.';stop();siteInvoke(button);return;
+      status.enabledObservedMono??=performance.now();status.phase='clicked';status.trigger=source==='server-clock'?'server-clock':'activation';status.clickedAt=Date.now();status.clickedMono=performance.now();status.invokeDelayMs=status.clickedMono-status.enabledObservedMono;status.attempts=++attempts;
+      if(status.trigger==='server-clock')status.clock.outcome='clicked';status.reason='활성화 확인 · 사이트 진입 함수 실행';
+      clearTimeout(timer);clearTimeout(clockTimer);inFlight=true;
+      if(!http){stop();siteInvoke(button);return;}
+      // If the site's guard returned without issuing any request, retry the
+      // current handler after its cooldown. The HTTP guard stays installed so
+      // delayed/automatic paths cannot create another network operation.
+      Promise.resolve().then(()=>siteInvoke(button)).then(()=>{
+        inFlight=false;if(done||http.claimed)return;
+        if(attempts>=3){status.phase='blocked';status.reason='사이트 함수 실행 후 진입 요청이 발생하지 않았습니다.';stop();return;}
+        retryAt=performance.now()+1000;status.phase='armed';status.reason='진입 요청 미발생 · 사이트 잠금 해제 후 재확인';timer=setTimeout(tick,1000);
+      }).catch(()=>{inFlight=false;if(done)return;status.phase='blocked';status.reason='사이트 진입 함수 실행 결과를 확인하지 못했습니다.';stop();});return;
     }
     status.reason=!prepared||buttons.length!==1?'확인된 준비 화면과 예매 버튼을 기다립니다.':blocked?'안내/인증/처리가 끝나기를 기다립니다.':!status.observedDisabled?'처음부터 활성화된 버튼에는 중복 클릭하지 않고 사이트의 자동 진행을 기다립니다.':'사이트의 예매 버튼 활성화를 기다립니다.';
     timer=setTimeout(tick,250);
@@ -153,19 +157,26 @@ function armGate({goodsCode,runId=null,timeoutMs=15*86400000,httpRetry=false,all
   const setClock=config=>{
     if(done||status.clock.firedAtMono!=null||config?.runId!==runId||config.documentId!==status.documentId||String(config?.goodsCode)!==String(goodsCode))return false;
     const {deadlineMono,validUntilMono,uncertaintyMs,openAt}=config;
-    if(config.source!=='ticket-server'||![deadlineMono,validUntilMono,uncertaintyMs,openAt].every(Number.isFinite)||uncertaintyMs<0||uncertaintyMs>501||validUntilMono<deadlineMono+(httpRetry?1000:0))return false;
+    if(config.source!=='ticket-server'||![deadlineMono,validUntilMono,uncertaintyMs,openAt].every(Number.isFinite)||uncertaintyMs<0||uncertaintyMs>501||validUntilMono<deadlineMono)return false;
     clearTimeout(clockTimer);status.clock={outcome:'armed',deadlineMono,validUntilMono,uncertaintyMs,openAt};
     const fire=()=>{
       if(done)return;
       const now=performance.now();
       if(now>validUntilMono){status.clock.outcome='stale';return;}
-      const firstAt=deadlineMono-(httpRetry?1000:0);
+      const firstAt=deadlineMono;
       if(now<firstAt){clockTimer=setTimeout(fire,Math.ceil(firstAt-now));return;}
       status.clock.firedAtMono=now;status.clock.delayMs=now-firstAt;
       status.clock.outcome='not-ready';tick('server-clock');
     };
     fire();return true;
   };
+  if(typeof createEntryHttp==='function'){
+    const control=window.__ticketSiteCode,epoch=control?.epoch;
+    http=createEntryHttp({assertActive:()=>{if(done||location.pathname!==startPath||control&&(window.__ticketSiteCode!==control||control.epoch!==epoch||control.stopped||Date.now()>control.leaseUntil))throw Error('SITE_CODE_STOPPED');},onStatus:value=>{
+      status.http=value;if(value.requestCount){status.phase='http-running';clearTimeout(timer);clearTimeout(clockTimer);observer?.disconnect();}
+      if(Number.isFinite(value.startedMono)&&Number.isFinite(status.clickedMono))status.requestDelayMs=Math.max(0,value.startedMono-status.clickedMono);
+    }});
+  }
   window.__bearsGate={status,stop,setClock,requestObserved(){if(done||http?.claimed)return;status.phase='request-observed';status.reason='사이트의 진입 요청을 관찰했습니다.';stop();}};tick();return status;
 }
 function setGateClock(config){return window.__bearsGate?.setClock?.(config)||false;}

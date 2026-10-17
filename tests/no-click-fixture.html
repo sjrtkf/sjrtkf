@@ -12,7 +12,7 @@ if(route.startsWith('/ticket/')){
  bind('prepare',async()=>{await json('/fixture/preparation',{});location.href='https://tickets.interpark.com/gates/ticket/26009123';});
 }else if(route.startsWith('/gates/')){
  document.body.innerHTML='<main>예매 준비가 완료됐어요<button id="gate" disabled>남은시간 00:01</button></main>';
- bind('gate',async()=>{await json('https://ent-waiting-api.interpark.com/waiting/api/secure-url',{});location.href='https://tickets.interpark.com/waiting';});
+ bind('gate',async()=>{const response=await json('https://ent-waiting-api.interpark.com/waiting/api/secure-url',{signature:'fixture',secureData:'fixture'});location.href=response.redirectUrl;});
  window.activate=()=>{const b=document.getElementById('gate');b.disabled=false;b.textContent='예매하기';};
 }else if(route==='/waiting'){
  document.body.innerHTML='<h1>대기열</h1>';

@@ -20,10 +20,8 @@ function fixture(respond,{end=2000,start=0}={}){
   return {window,original,calls,statuses,engine:ctx.engine,settle,async advance(value){mono=value;for(const [key,t] of [...timers])if(t.at<=mono){timers.delete(key);t.fn();}await settle();},deactivate:()=>{active=false;},request:()=>window.fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({signature:'test',secureData:'test'})})};
 }
 const response=(status,body)=>({status,clone:()=>({text:async()=>JSON.stringify(body)})});
-test('conditional retries skip missed slots, stay 30ms apart and stop on redirect',async()=>{
-  const f=fixture(n=>response(n===1?403:200,n===1?{error:'P40057'}:{redirectUrl:redirect}));
-  const task=f.request();await f.settle();assert.equal(f.calls.length,1);await f.advance(29);assert.equal(f.calls.length,1);await f.advance(300);await task;
-  assert.deepEqual(f.calls.map(c=>c.mono),[0,300]);assert.equal(f.engine.status.outcome,'redirect-ready');assert.equal(f.window.fetch,f.original);
+test('unverified not-open rejection never replays signed data',async()=>{
+ const f=fixture(()=>response(403,{error:'P40057'}));await assert.rejects(f.request());await f.advance(5000);assert.equal(f.calls.length,1);assert.equal(f.engine.status.outcome,'not-open');f.engine.stop();assert.equal(f.window.fetch,f.original);
 });
 test('only one request is in flight and duplicate callers do not issue another POST',async()=>{
   let resolve;const f=fixture(()=>new Promise(r=>resolve=r));const a=f.request(),b=f.request();await f.settle();await f.advance(900);assert.equal(f.calls.length,1);resolve(response(200,{redirectUrl:redirect}));await Promise.all([a,b]);assert.equal(f.calls.length,1);
@@ -33,14 +31,14 @@ test('timeouts and unclassified responses are not replayed',async()=>{
     const f=fixture(respond),task=assert.rejects(f.request());await task;await f.advance(2000);assert.equal(f.calls.length,1);
   }
 });
-test('cancellation and expired lease prevent the next request',async()=>{
-  for(const cancel of [f=>f.engine.stop(),f=>f.deactivate()]){const f=fixture(()=>response(403,{error:'P40057'}));const rejection=assert.rejects(f.request());await f.settle();cancel(f);await f.advance(100);await rejection;assert.equal(f.calls.length,1);assert.equal(f.window.fetch,f.original);}
+test('cancellation before dispatch prevents a request and restores fetch',async()=>{
+ const f=fixture(()=>response(200,{redirectUrl:redirect}));const task=f.request();f.engine.stop();await assert.rejects(task);assert.equal(f.calls.length,0);assert.equal(f.window.fetch,f.original);
 });
 test('an in-flight success after cancellation cannot reach site navigation',async()=>{
   let resolve;const f=fixture(()=>new Promise(r=>resolve=r));const rejection=assert.rejects(f.request());await f.settle();f.engine.stop();resolve(response(200,{redirectUrl:redirect}));await rejection;assert.equal(f.calls.length,1);
 });
-test('window expiration has a finite request bound and never sends outside it',async()=>{
-  const f=fixture(()=>response(403,{error:'P40057'}),{end:60}),rejection=assert.rejects(f.request());await f.settle();await f.advance(30);await f.advance(60);await rejection;assert.deepEqual(f.calls.map(c=>c.mono),[0,30,60]);assert.equal(f.engine.status.outcome,'expired');
+test('late duplicate after success still shares result without another request',async()=>{
+ const f=fixture(()=>new Response(JSON.stringify({redirectUrl:redirect}),{status:200}));await (await f.request()).json();await f.advance(6000);const b=await f.request();assert.equal((await b.json()).redirectUrl,redirect);assert.equal(f.calls.length,1);f.engine.stop();
 });
 test('unrelated fetches pass through and malformed signed bodies never send',async()=>{
   const f=fixture(()=>response(200,{}));await f.window.fetch('https://example.test/data');assert.equal(f.calls.length,1);await assert.rejects(f.window.fetch(endpoint,{method:'POST',body:'{}'}));assert.equal(f.calls.length,1);
@@ -62,4 +60,14 @@ test('public schedule selects the exact goods code with explicit Korean timezone
 test('duplicate callers can independently consume the coalesced response body',async()=>{
  const f=fixture(()=>new Response(JSON.stringify({redirectUrl:redirect}),{status:200}));
  const [a,b]=await Promise.all([f.request(),f.request()]);assert.equal((await a.json()).redirectUrl,redirect);assert.equal((await b.json()).redirectUrl,redirect);assert.equal(f.calls.length,1);
+});
+
+test('a different signed operation is never given the first operations result',async()=>{
+ const f=fixture(()=>new Response(JSON.stringify({redirectUrl:redirect}),{status:200}));await f.request();
+ await assert.rejects(f.window.fetch(endpoint,{method:'POST',body:JSON.stringify({signature:'other',secureData:'other'})}),/CONFLICT/);
+ assert.equal(f.calls.length,1);f.engine.stop();
+});
+test('a saved wrapper cannot supply a completed success after stop',async()=>{
+ const f=fixture(()=>new Response(JSON.stringify({redirectUrl:redirect}),{status:200}));await f.request();const saved=f.window.fetch;f.engine.stop();
+ await assert.rejects(saved(endpoint,{method:'POST',body:JSON.stringify({signature:'test',secureData:'test'})}),/STOPPED/);assert.equal(f.calls.length,1);
 });

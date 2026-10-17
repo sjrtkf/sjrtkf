@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "야구 티켓팅 도우미 연결",
-  "version": "0.9.19",
+  "version": "0.9.20",
   "description": "왼쪽 설정 프로그램과 일반 Chrome의 NOL 야구 예매 화면을 연결합니다.",
   "minimum_chrome_version": "120",
   "permissions": [

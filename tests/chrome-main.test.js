@@ -117,7 +117,7 @@ test('loss on an old parent tab cannot overwrite the active popup result',()=>{
 });
 test('older extension cannot begin the updated seat flow before any browser action',async()=>{
   const {api,context,calls}=setup();api.trackTabs([gate(1)]);context.bridgeState={extensionVersion:'0.9.3'};
-  await assert.rejects(api.command('start',{}),/v0.9.18/);assert.equal(api.runs.current,null);assert.equal(calls.length,0);
+  await assert.rejects(api.command('start',{}),/v0.9.20/);assert.equal(api.runs.current,null);assert.equal(calls.length,0);
 });
 test('Chrome targets: only a child of the running tab is adopted; unrelated tabs do not switch target',()=>{
   const {api}=setup();api.trackTabs([gate(1),gate(7)]);const run=api.begin(1);run.entryActionsStarted=true;
@@ -547,7 +547,7 @@ test('lost navigation acknowledgement is observed once without resending the HTT
 
 test('starting on a countdown gate preserves the supplied schedule and arms conditional HTTP',async()=>{
   const {api,context}=setup();api.trackTabs([gate(1)]);const opening=Date.now()+120000;
-  context.bridgeState={extensionVersion:'0.9.19'};
+  context.bridgeState={extensionVersion:'0.9.20'};
   context.invoke=(fn,arg)=>{
     if(fn?.name==='gateStatus')return {supported:true,goodsCode:'26005452',prepared:true,enabled:false};
     if(fn==='gateState')return null;
@@ -560,5 +560,5 @@ test('starting on a countdown gate preserves the supplied schedule and arms cond
 });
 test('conditional entry refuses an extension without the new HTTP runtime',async()=>{
   const {api,context,calls}=setup();api.trackTabs([gate(1)]);context.bridgeState={extensionVersion:'0.9.18'};
-  await assert.rejects(api.command('start',{entryStrategy:'clock',openAt:Date.now()+10000}),/v0.9.19/);assert.equal(calls.length,0);
+  await assert.rejects(api.command('start',{entryStrategy:'clock',openAt:Date.now()+10000}),/v0.9.20/);assert.equal(calls.length,0);
 });

@@ -61,4 +61,4 @@ function attach(wc,onEvent,{now=()=>performance.now()}={}){
   }else lost();
   return {dispose,get healthy(){return healthy;}};
 }
-module.exports={attach,isEntryRequest,classifyEntryResponse:require('./entry-http').classifyEntryResponse};
+module.exports={attach,isEntryRequest,classifyEntryResponse:require('./entry-http').classifyEntryResponse,...require('./entry-observation')};
