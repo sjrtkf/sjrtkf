@@ -18,7 +18,7 @@ function fixture({legacy=false,visible=true,duplicate=false,other=false,source='
   container.querySelectorAll=selector=>selector.startsWith('input')?[input]:selector==='button'||selector.startsWith('.capchaBtns')?[button]:selector==='.alertNotice'||selector.includes('captchaError')?[error]:[];
   const document={body,querySelectorAll(selector){if(selector.startsWith('img[alt=')||selector==='#imgCaptcha')return duplicate?[image,image2]:[image];if(selector.includes('ModalCaptchaSlider'))return other?[new Element()]:[];return [];},createElement(tag){assert.equal(tag,'canvas');return {getContext:()=>({drawImage(){if(canvasError)throw Error('tainted');}}),toDataURL:()=>source};}};
   const image2=Object.assign(new Element(),image);
-  const context=vm.createContext({window:{},document,location:{href:legacy?'https://ticket.interpark.com/Book/BookSeat.asp?session=private':'https://tickets.interpark.com/onestop/seat'},crypto:{randomUUID:()=> 'fixture-document'},URL,HTMLInputElement:Input,Event:class{constructor(type){this.type=type;this.isTrusted=false;}},getComputedStyle:e=>({display:e.hidden?'none':'block',visibility:'visible'}),setTimeout(fn){timeout=fn;return 1;},clearTimeout(){timeout=null;},MutationObserver:class{constructor(fn){observer=fn;}observe(){}disconnect(){observer=null;}}});
+  const context=vm.createContext({siteInvoke:(e,kind,value)=>{if(kind==='change'){e.value=value;e.siteChange?.(value);return;}return e.click();},window:{},document,location:{href:legacy?'https://ticket.interpark.com/Book/BookSeat.asp?session=private':'https://tickets.interpark.com/onestop/seat'},crypto:{randomUUID:()=> 'fixture-document'},URL,HTMLInputElement:Input,Event:class{constructor(type){this.type=type;this.isTrusted=false;}},getComputedStyle:e=>({display:e.hidden?'none':'block',visibility:'visible'}),setTimeout(fn){timeout=fn;return 1;},clearTimeout(){timeout=null;},MutationObserver:class{constructor(fn){observer=fn;}observe(){}disconnect(){observer=null;}}});
   const run=(fn,arg)=>vm.runInContext(`(${fn.toString()})(${JSON.stringify(arg)??''})`,context);
   return {context,image,input,button,error,run,clicks:()=>clicks,notify:()=>observer?.(),expire:()=>timeout?.(),setSource(value){image.src=source=value;}};
 }
@@ -32,7 +32,7 @@ test('captcha is absent without installing a timer and slider is explicitly unsu
 });
 test('captcha submits exactly one time through the native setter and page button',async()=>{
   const f=fixture(),s=f.run(captcha.captchaSnapshot),events=[];f.input.addEventListener('input',e=>events.push(e.type));f.input.addEventListener('change',e=>events.push(e.type));
-  const result=await f.run(captcha.captchaSubmit,{challengeId:s.challengeId,text:'ABCDEF'});assert.equal(result.submitted,true);assert.equal(f.input.value,'ABCDEF');assert.deepEqual(events,['input','change']);assert.equal(f.clicks(),1);
+  const result=await f.run(captcha.captchaSubmit,{challengeId:s.challengeId,text:'ABCDEF'});assert.equal(result.submitted,true);assert.equal(f.input.value,'ABCDEF');assert.deepEqual(events,[]);assert.equal(f.clicks(),1);
   assert.equal((await f.run(captcha.captchaSubmit,{challengeId:s.challengeId,text:'ABCDEF'})).submitted,false);assert.equal(f.clicks(),1);assert.equal(f.run(captcha.captchaStatus,{challengeId:s.challengeId}).status,'submitted');
 });
 test('captcha old image, invalid code and previous document tokens never submit',async()=>{
@@ -64,7 +64,7 @@ test('captcha result distinguishes visible failure and disappearance without ass
   assert.equal(f.run(captcha.captchaStatus,{challengeId:s.challengeId}).status,'incorrect');f.image.hidden=true;assert.equal(f.run(captcha.captchaStatus,{challengeId:s.challengeId}).status,'absent');
 });
 test('captcha ambiguous, unloaded, tainted and disabled input cases do not expose a usable image',()=>{
-  const fixtures=[fixture({duplicate:true}),fixture({source:'https://cdn.example/image.png',canvasError:true})];
+  const fixtures=[fixture({duplicate:true})];
   const loading=fixture();loading.image.complete=false;fixtures.push(loading);const disabled=fixture();disabled.input.disabled=true;fixtures.push(disabled);
   for(const f of fixtures){const s=f.run(captcha.captchaSnapshot);assert.equal(s.supported,false);assert.equal(s.imageDataUrl,undefined);assert.equal(f.clicks(),0);}
 });
@@ -75,3 +75,5 @@ test('legacy uses the locally evidenced imgCaptcha/txtCaptcha/capchaBtns control
 test('captcha page functions reject unrelated websites despite copied selectors',()=>{
   const f=fixture();f.context.location.href='https://example.com/onestop/seat';assert.equal(f.run(captcha.captchaSnapshot).status,'unsupported');assert.equal(f.clicks(),0);
 });
+
+test('unreadable browser image is refreshable but can never be submitted',async()=>{const f=fixture({source:'https://cdn.example/image.png',canvasError:true}),s=f.run(captcha.captchaSnapshot);assert.equal(s.status,'retry');assert.equal(s.supported,true);assert.ok(s.challengeId);assert.equal(s.imageDataUrl,null);assert.equal((await f.run(captcha.captchaSubmit,{challengeId:s.challengeId,text:'ABCDEF'})).submitted,false);assert.equal(f.clicks(),0);f.input.value='USER';assert.equal(f.run(captcha.captchaSnapshot).status,'manual');});

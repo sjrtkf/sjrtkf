@@ -58,7 +58,7 @@ function armEntry({key,openAt,offsetMs=0,timeoutMs=60000}) {
     if(now-deadline>timeoutMs){status.phase='timeout';stop();return;}
     const matches=find();
     const button=matches.find(b=>!b.disabled&&b.getAttribute('aria-disabled')!=='true'&&b.textContent.trim()==='예매하기');
-    if(button){status.phase='clicked';status.clickedAt=Date.now()+offsetMs;status.delayMs=Math.max(0,now-deadline);stop();button.click();return;}
+    if(button){status.phase='clicked';status.clickedAt=Date.now()+offsetMs;status.delayMs=Math.max(0,now-deadline);stop();siteInvoke(button);return;}
     timer=setTimeout(tick,20);
   };
   observer=new MutationObserver(tick);observer.observe(document.body,{subtree:true,childList:true,attributes:true,attributeFilter:['disabled','aria-disabled'],characterData:true});
@@ -79,16 +79,17 @@ function prepareEntry({key,runId=null}) {
   if(button.disabled||button.getAttribute('aria-disabled')==='true'||button.textContent.trim()!=='예매하기')throw new Error('대상 경기의 준비 화면 진입 버튼이 활성화되지 않았습니다.');
   const status={phase:'clicked',key,runId,clickedAt:Date.now(),delayMs:null,preparation:true};
   window.__bearsEntry={status,stop(){}};
-  button.click();return status;
+  siteInvoke(button);return status;
 }
 function gateStatus({goodsCode}={}) {
   const match=location.origin==='https://tickets.interpark.com'&&location.pathname.match(/^\/gates\/ticket\/(\d{8})$/);
   const status={supported:!!match,goodsCode:match?match[1]:null,prepared:false,enabled:false,buttonText:null};
   if(!match||goodsCode&&String(goodsCode)!==match[1])return {...status,reason:'대상 경기의 준비 화면이 아닙니다.'};
   const root=document.querySelector('main');
-  status.prepared=!!root&&root.textContent.replace(/\s/g,'').includes('예매준비가완료됐어요');
+  status.prepared=!!root&&/예매준비가완료됐어요|예매는오픈시간부터가능해요/.test(root.textContent.replace(/\s/g,''));
   const visible=e=>{const r=e.getBoundingClientRect();const css=getComputedStyle(e);return r.width>0&&r.height>0&&css.visibility!=='hidden'&&css.display!=='none';};
   const notices=[...document.querySelectorAll('button')].filter(b=>visible(b)&&String(b.textContent||'').trim()==='확인하고 예매하기');
+  if(!notices.length)delete window.__bearsBookingNotice;
   let noticeKey=null,container=notices.length===1?notices[0].parentElement:null;
   while(container&&container!==document.body){
     const headings=[...container.querySelectorAll('h1,h2,h3,[role="heading"],[class*="title"],[class*="Title"]')].filter(visible).map(e=>e.textContent.replace(/\s/g,''));
@@ -105,33 +106,45 @@ function gateStatus({goodsCode}={}) {
   status.reason=blocked?'안내/인증/처리가 끝나기를 기다립니다.':status.enabled?'사이트가 예매 버튼을 활성화했습니다.':'사이트의 예매 버튼 활성화를 기다립니다.';
   return status;
 }
-function armGate({goodsCode,runId=null,timeoutMs=15*86400000}={}) {
+function armGate({goodsCode,runId=null,timeoutMs=15*86400000,httpRetry=false,allowInitiallyEnabled=false}={}) {
   // Kept self-contained for execution in the isolated browser world.
   const match=location.origin==='https://tickets.interpark.com'&&location.pathname.match(/^\/gates\/ticket\/(\d{8})$/);
   if(!match||!goodsCode||String(goodsCode)!==match[1])throw new Error('대상 경기의 준비 화면을 확인하지 못했습니다.');
   const prior=window.__bearsGate;
-  if(prior?.status?.goodsCode===String(goodsCode)&&prior.status.runId===runId&&['armed','clicked','request-observed'].includes(prior.status.phase))return prior.status;
+  if(prior?.status?.goodsCode===String(goodsCode)&&prior.status.runId===runId&&['armed','clicked','request-observed','http-running'].includes(prior.status.phase))return prior.status;
   prior?.stop();
   const startPath=location.pathname,started=performance.now();
   const status={phase:'armed',documentId:String(performance.timeOrigin)+':'+started,goodsCode:String(goodsCode),runId,clickedAt:null,trigger:null,observedDisabled:false,clock:{outcome:'not-configured'},reason:'사이트의 예매 버튼 활성화를 기다립니다.'};
-  let observer,timer,clockTimer,done=false;
-  const stop=()=>{done=true;clearTimeout(timer);clearTimeout(clockTimer);observer?.disconnect();if(status.phase==='armed')status.phase='stopped';};
+  let observer,timer,clockTimer,http,done=false;
+  const stop=()=>{done=true;clearTimeout(timer);clearTimeout(clockTimer);observer?.disconnect();http?.stop();if(['armed','http-running'].includes(status.phase))status.phase='stopped';};
   const visible=e=>{const r=e.getBoundingClientRect();const css=getComputedStyle(e);return r.width>0&&r.height>0&&css.visibility!=='hidden'&&css.display!=='none';};
   const tick=(source='activation')=>{
-    if(done)return;clearTimeout(timer);
+    if(done||status.phase==='http-running')return;clearTimeout(timer);
     if(location.origin!=='https://tickets.interpark.com'||location.pathname!==startPath){status.phase='navigated';stop();return;}
     if(performance.now()-started>timeoutMs){status.phase='timeout';stop();return;}
     const root=document.querySelector('main');
-    const prepared=!!root&&root.textContent.replace(/\s/g,'').includes('예매준비가완료됐어요');
+    const prepared=!!root&&/예매준비가완료됐어요|예매는오픈시간부터가능해요/.test(root.textContent.replace(/\s/g,''));
     const buttons=root?[...root.querySelectorAll('button')].filter(b=>visible(b)&&b.textContent.trim()!=='확인하고 예매하기'&&/(?:예매하기$|^남은시간\s*\d{1,2}:\d{2}$)/.test(b.textContent.trim())):[];
     const notice=[...document.querySelectorAll('button')].some(b=>visible(b)&&String(b.textContent||'').trim()==='확인하고 예매하기');
     const blocked=notice||[...document.querySelectorAll('[role="dialog"], [aria-modal="true"], [aria-busy="true"]')].some(visible);
     const button=prepared&&buttons.length===1?buttons[0]:null;
     if(button&&!blocked&&(button.disabled||button.getAttribute('aria-disabled')==='true'))status.observedDisabled=true;
-    if(button&&!blocked&&!button.disabled&&button.getAttribute('aria-disabled')!=='true'&&button.textContent.trim()==='예매하기'&&status.observedDisabled){
+    if(httpRetry&&status.clock.outcome==='not-configured'){timer=setTimeout(tick,250);return;}
+    const firstAt=status.clock.deadlineMono-(httpRetry?1000:0);
+    if(status.clock.outcome==='armed'&&performance.now()<firstAt){timer=setTimeout(tick,Math.min(250,firstAt-performance.now()));return;}
+    if(httpRetry&&button&&!blocked&&Number.isFinite(firstAt)&&performance.now()<=status.clock.deadlineMono+1000){
+      const control=window.__ticketSiteCode,epoch=control?.epoch,connection=control?.connection;
+      const assertActive=()=>{if(done||location.pathname!==startPath||window.__ticketSiteCode!==control||control?.epoch!==epoch||control?.connection!==connection||control?.stopped||Date.now()>control?.leaseUntil)throw Error('SITE_CODE_STOPPED');};
+      http=createEntryHttp({startMono:firstAt,endMono:status.clock.deadlineMono+1000,intervalMs:30,assertActive,onStatus:value=>{status.http=value;}});
+      status.http=http.status;status.phase='http-running';status.trigger='server-clock';status.clickedAt=Date.now();status.clock.outcome='http-running';
+      clearTimeout(timer);clearTimeout(clockTimer);observer?.disconnect();
+      try{const pending=siteInvoke(button,'entry');if(pending&&typeof pending.then==='function')pending.finally(()=>http.dispose()).catch(()=>{});}catch(error){http.stop();http.dispose();throw error;}return;
+    }
+    if(httpRetry&&performance.now()>status.clock.deadlineMono+1000){status.phase='blocked';status.reason='예약 진입 구간을 놓쳤습니다. 새 요청 없이 중지합니다.';stop();return;}
+    if(button&&!blocked&&!button.disabled&&button.getAttribute('aria-disabled')!=='true'&&button.textContent.trim()==='예매하기'&&(status.observedDisabled||allowInitiallyEnabled)){
       // Both triggers acquire this latch synchronously, before dispatching.
       // A delivered DOM click is not evidence of an accepted server request.
-      status.phase='clicked';status.trigger=source==='server-clock'?'server-clock':'activation';status.clickedAt=Date.now();status.clickedMono=performance.now();if(status.trigger==='server-clock')status.clock.outcome='clicked';status.reason='사이트가 활성화한 예매 버튼에 클릭을 한 번 전달했습니다.';stop();button.click();return;
+      status.phase='clicked';status.trigger=source==='server-clock'?'server-clock':'activation';status.clickedAt=Date.now();status.clickedMono=performance.now();if(status.trigger==='server-clock')status.clock.outcome='clicked';status.reason='사이트의 활성화된 진입 함수를 한 번 실행했습니다.';stop();siteInvoke(button);return;
     }
     status.reason=!prepared||buttons.length!==1?'확인된 준비 화면과 예매 버튼을 기다립니다.':blocked?'안내/인증/처리가 끝나기를 기다립니다.':!status.observedDisabled?'처음부터 활성화된 버튼에는 중복 클릭하지 않고 사이트의 자동 진행을 기다립니다.':'사이트의 예매 버튼 활성화를 기다립니다.';
     timer=setTimeout(tick,250);
@@ -140,20 +153,20 @@ function armGate({goodsCode,runId=null,timeoutMs=15*86400000}={}) {
   const setClock=config=>{
     if(done||status.clock.firedAtMono!=null||config?.runId!==runId||config.documentId!==status.documentId||String(config?.goodsCode)!==String(goodsCode))return false;
     const {deadlineMono,validUntilMono,uncertaintyMs,openAt}=config;
-    if(config.source!=='ticket-server'||![deadlineMono,validUntilMono,uncertaintyMs,openAt].every(Number.isFinite)||uncertaintyMs<0||uncertaintyMs>501||validUntilMono<deadlineMono)return false;
+    if(config.source!=='ticket-server'||![deadlineMono,validUntilMono,uncertaintyMs,openAt].every(Number.isFinite)||uncertaintyMs<0||uncertaintyMs>501||validUntilMono<deadlineMono+(httpRetry?1000:0))return false;
     clearTimeout(clockTimer);status.clock={outcome:'armed',deadlineMono,validUntilMono,uncertaintyMs,openAt};
     const fire=()=>{
       if(done)return;
       const now=performance.now();
       if(now>validUntilMono){status.clock.outcome='stale';return;}
-      if(now<deadlineMono){clockTimer=setTimeout(fire,Math.ceil(deadlineMono-now));return;}
-      status.clock.firedAtMono=now;status.clock.delayMs=now-deadlineMono;
-      if(document.hidden){status.clock.outcome='not-ready';status.reason='시각 도달 · 준비 화면이 숨겨져 정상 활성화 감지를 유지합니다.';return;}
+      const firstAt=deadlineMono-(httpRetry?1000:0);
+      if(now<firstAt){clockTimer=setTimeout(fire,Math.ceil(firstAt-now));return;}
+      status.clock.firedAtMono=now;status.clock.delayMs=now-firstAt;
       status.clock.outcome='not-ready';tick('server-clock');
     };
     fire();return true;
   };
-  window.__bearsGate={status,stop,setClock,requestObserved(){if(done)return;status.phase='request-observed';status.reason='사이트의 진입 요청을 관찰했습니다.';stop();}};tick();return status;
+  window.__bearsGate={status,stop,setClock,requestObserved(){if(done||http?.claimed)return;status.phase='request-observed';status.reason='사이트의 진입 요청을 관찰했습니다.';stop();}};tick();return status;
 }
 function setGateClock(config){return window.__bearsGate?.setClock?.(config)||false;}
 function noteGateRequest({runId}={}){const gate=window.__bearsGate;if(gate?.status.runId!==runId)return null;gate.requestObserved?.();return gate.status;}

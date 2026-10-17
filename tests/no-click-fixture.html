@@ -1,0 +1,40 @@
+<!doctype html><html lang="ko"><meta charset="utf-8"><body><script>
+// This is a local protocol fixture, never served to a real booking profile.
+const data=__FIXTURE_DATA__,route=location.pathname;
+window.fixture={events:0,functions:0};
+HTMLElement.prototype.click=function(){fixture.events++;throw Error('DOM click forbidden');};
+const dispatch=EventTarget.prototype.dispatchEvent;
+EventTarget.prototype.dispatchEvent=function(e){if(/^(click|pointer|mouse|input|change|key)/.test(e.type)){fixture.events++;throw Error('Input dispatch forbidden');}return dispatch.call(this,e);};
+const bind=(id,fn)=>document.getElementById(id).__reactProps$fixture={onClick:e=>{fixture.functions++;return fn(e);}};
+const json=async(url,body)=>{const r=await fetch(url,body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{});return r.json();};
+if(route.startsWith('/ticket/')){
+ document.body.innerHTML='<div><div class="grid-area_info">10월 17일</div><div class="grid-area_match"><img alt="홈"><img alt="원정"></div><button id="prepare" class="grid-area_cta">예매하기</button></div>';
+ bind('prepare',async()=>{await json('/fixture/preparation',{});location.href='https://tickets.interpark.com/gates/ticket/26009123';});
+}else if(route.startsWith('/gates/')){
+ document.body.innerHTML='<main>예매 준비가 완료됐어요<button id="gate" disabled>남은시간 00:01</button></main>';
+ bind('gate',async()=>{await json('https://ent-waiting-api.interpark.com/waiting/api/secure-url',{});location.href='https://tickets.interpark.com/waiting';});
+ window.activate=()=>{const b=document.getElementById('gate');b.disabled=false;b.textContent='예매하기';};
+}else if(route==='/waiting'){
+ document.body.innerHTML='<h1>대기열</h1>';
+ window.queueAdmitted=()=>{location.href='https://tickets.interpark.com/onestop/seat';};
+}else if(route==='/onestop/seat'){
+ sessionStorage.setItem('interpark/context',JSON.stringify(data.context));
+ const init=document.createElement('script');init.id='__NEXT_DATA__';init.type='application/json';init.textContent=JSON.stringify({props:{pageProps:{initData:data.context}}});document.head.appendChild(init);
+ fixture.cache=new Map([['/getContextData/undefined',{data:data.context}]]);
+ window.webpackChunk_N_E=[];window.webpackChunk_N_E.push=entry=>entry[2](id=>id===74133?{F:{getContextData:()=>JSON.parse(sessionStorage.getItem('interpark/context'))}}:{d:{cache:fixture.cache,mutate:async(k,value)=>fixture.cache.set(k,{data:value})}});
+ window.next={router:{push:async r=>{if(JSON.stringify(fixture.cache.get('/getContextData/undefined').data)!==sessionStorage.getItem('interpark/context'))throw Error('Stale context');history.pushState({},'','/onestop'+r);document.body.innerHTML='<h1>결제</h1>';return true;}}};
+ function grades(){document.body.innerHTML='<button id="grade" class="SportsSeatGradeList_contentItem__test"><span class="SportsSeatGradeList_contentGradeName__test">일반석</span><span class="SportsSeatGradeList_contentRemainCount__test">4</span></button>';bind('grade',()=>{document.body.innerHTML='<button id="map">직접 좌석 선택하기</button>';bind('map',map);});}
+ function map(){document.body.innerHTML='<svg width="120" height="80"><g id="seat_block_001:101">'+data.seats.map((s,i)=>'<circle class="js-seat" id="'+s.id+'" cx="'+(20+i*25)+'" cy="20" r="8"/>').join('')+'</g></svg><button id="back">좌석도 전체보기</button>';bind('back',grades);}
+ async function captcha(){
+  const image=await json('/onestop/api/captcha/image',{});
+  document.body.innerHTML='<div id="captcha"><img alt="캡챠 이미지"><input type="text"><div class="ModalCaptchaText_captchaError__test"></div><button id="verify" disabled>입력완료</button><button id="refresh" class="ModalCaptchaText_buttonRefresh__test" aria-label="새로고침">새로고침</button></div>';
+  const canvas=document.createElement('canvas');canvas.width=120;canvas.height=40;const ctx=canvas.getContext('2d');ctx.fillStyle=image.sequence===1?'red':'blue';ctx.fillRect(0,0,120,40);document.querySelector('img').src=canvas.toDataURL();
+  const input=document.querySelector('input');input.__reactProps$fixture={onChange:e=>{fixture.functions++;queueMicrotask(()=>{document.getElementById('verify').disabled=e.target.value.length!==6;});}};
+  bind('refresh',captcha);
+  bind('verify',async()=>{const result=await json('/onestop/api/captcha/verify?p1='+input.value);if(result.result==='Y'){sessionStorage.setItem('interpark/captchaVerify','true');grades();}else document.querySelector('[class*=captchaError]').textContent='보안문자가 일치하지 않습니다.';});
+ }
+ document.body.innerHTML='<div><h2>예매 안내</h2><p>예매 안내를 확인하세요.</p><button id="notice">확인하고 예매하기</button></div>';
+ bind('notice',captcha);
+ window.emptyNotice=()=>{const modal=document.createElement('div');modal.setAttribute('role','alertdialog');modal.innerHTML='<p id="dialogMessage">구매하실 좌석을 선택하세요.</p><button id="empty">확인</button>';document.body.appendChild(modal);bind('empty',()=>modal.remove());};
+}
+</script></body></html>

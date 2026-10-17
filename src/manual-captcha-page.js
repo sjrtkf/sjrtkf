@@ -77,8 +77,7 @@ function manualCaptchaPrepare(arg){
         const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')?.set;
         if(!setter)return stop('unsupported','입력칸에 값을 전달할 수 없습니다. 예매창에서 직접 입력해 주세요.');
         setter.call(current.input,options.text);
-        current.input.dispatchEvent(new Event('input',{bubbles:true}));
-        current.input.dispatchEvent(new Event('change',{bubbles:true}));
+        siteInvoke(current.input,'change',options.text);
         // One bounded event/microtask turn lets a controlled input update its
         // button. There is no timer, observer, polling, or delayed retry.
         await Promise.resolve();
@@ -89,7 +88,7 @@ function manualCaptchaPrepare(arg){
         if(current.manualTouched||String(found.input.value)!==options.text)return stop('manual','다른 입력이 감지되어 확인 버튼을 누르지 않았습니다.');
         if(!enabled(found.button))return stop('disabled','입력완료 버튼이 아직 비활성 상태입니다. 예매창에서 직접 확인해 주세요.');
         current.submitted=true;
-        found.button.click();
+        siteInvoke(found.button);
         return {submitted:true,status:'submitted',challengeId:current.id,message:'직접 작성한 문자를 전달하고 입력완료 버튼을 한 번 눌렀습니다. 실제 인증 결과는 예매창에서 확인해 주세요.'};
       }catch{return stop('unsupported','입력 전달 중 오류가 발생했습니다. 예매창의 내용을 확인해 주세요.');}
       finally{current.locked=false;}

@@ -6,7 +6,7 @@ function fixture(){
   const button={disabled:true,textContent:'09/18 11:00 예매하기',getAttribute(){return null;},getBoundingClientRect(){return {width:100,height:40};},click(){clicks++;}};
   const main={textContent:'예매 준비가 완료됐어요',querySelectorAll(){return [button];}};
   const document={body:{},querySelector(){return main;},querySelectorAll(){return [];}};
-  const context=vm.createContext({document,window:{},location:{origin:'https://tickets.interpark.com',pathname:'/gates/ticket/26005452'},performance:{now:()=>0},Date,getComputedStyle:()=>({display:'block',visibility:'visible'}),setTimeout:()=>1,clearTimeout(){},MutationObserver:class{constructor(fn){callback=fn;}observe(){}disconnect(){}}});
+  const context=vm.createContext({siteInvoke:(e,kind,value)=>{if(kind==='change'){e.value=value;e.siteChange?.(value);return;}return e.click();},document,window:{},location:{origin:'https://tickets.interpark.com',pathname:'/gates/ticket/26005452'},performance:{now:()=>0},Date,getComputedStyle:()=>({display:'block',visibility:'visible'}),setTimeout:()=>1,clearTimeout(){},MutationObserver:class{constructor(fn){callback=fn;}observe(){}disconnect(){}}});
   return {context,button,main,document,tick:()=>callback(),clicks:()=>clicks,run:(fn,arg)=>vm.runInContext(`(${fn.toString()})(${JSON.stringify(arg)??''})`,context)};
 }
 test('게이트는 활성화 전에는 클릭하지 않고 실제 활성화 순간 한 번만 클릭한다',()=>{

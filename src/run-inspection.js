@@ -3,7 +3,7 @@
 const PHASES={prepare:'실행 준비',entry:'진입·화면 전환 대기',verification:'사용자 인증·안내 대기',search:'좌석 정보·조건 확인',selection:'좌석 선택 결과 확인',completion:'다음 화면 확인',retry:'재확인 대기',stop:'중지·정리',other:'기타 처리'};
 function seatExtensionCompatible(version){
   if(typeof version!=='string'||!/^\d+\.\d+\.\d+$/.test(version))return false;
-  const parts=version.split('.').map(Number),minimum=[0,9,4];
+  const parts=version.split('.').map(Number),minimum=[0,9,18];
   for(let i=0;i<3;i++){if(parts[i]>minimum[i])return true;if(parts[i]<minimum[i])return false;}
   return true;
 }
@@ -29,10 +29,12 @@ function observerDiagnosis(reason){
   return base;
 }
 function diagnosisForRun(run,message=''){
+  if(run.outcome==='booking-advanced')return {code:'booking-advanced',level:'success',title:'예매하기 후 다음 화면에 도착했습니다.',detail:'성인 수량과 예매하기 진행을 확인했습니다. 결제는 진행하지 않았습니다.',nextAction:'Chrome에서 예매 내용·수령 방법·결제를 확인하세요.'};
   const priceConfirmed={code:'price-confirmed',level:'success',title:'가격·할인 화면 도착을 확인했습니다.',detail:'좌석 선택 다음 단계까지 확인했으며 결제 완료는 아닙니다.',nextAction:'Chrome에서 가격·할인과 예매 내용을 확인하세요.'};
   if(run.outcome==='price-confirmed')return priceConfirmed;
   if(run.diagnosis)return {...run.diagnosis};
   const text=String(run.stopReason||run.failureDetail||message);
+  if(/등급.*이름|구역 이름을 확정/.test(text))return {code:'grade-name-conflict',level:'error',title:'좌석 구역 이름을 확정하지 못했습니다.',detail:'같은 등급 코드에 여러 이름이 표시됩니다. 좌석별 이름으로도 확인하지 못한 좌석은 조건을 검증할 수 없어 선택하지 않았습니다.',nextAction:'자동 로그 폴더의 grade-names 또는 grade-unresolved 기록에서 코드·이름을 확인할 수 있습니다.'};
   if(/관찰 연결|응답 관찰/.test(text))return observerDiagnosis(run.entry?.observerLostReason);
   if(!run.failureDetail&&!run.stopReason&&/^진입 확인 완료/.test(text))return {code:'entry-only',level:'info',title:'진입 확인만 완료했습니다.',detail:'진입 확인만 모드이므로 좌석 선택과 다음 단계 이동을 실행하지 않았습니다.',nextAction:'좌석까지 테스트하려면 진입 확인만을 끄고 실행하세요.'};
   if(!run.failureDetail&&!run.stopReason&&/^좌석 선택 승인 · 가격\/할인 화면 도착을 확인했습니다\./.test(text))return priceConfirmed;
@@ -46,12 +48,12 @@ function diagnosisForRun(run,message=''){
 function buildPreflight({connected=false,extensionUpdateRequired=false,extensionVersion,target=false,pageStage='unsupported',preferences={},inspectionOnly=false,networkHealthy=null,scene=null,seats=null,readFailed=false}={}){
   const checks=[],add=(id,level,title,detail)=>checks.push({id,level,title,detail});
   add('connection',connected?'ok':'error',connected?'Chrome 확장 연결됨':'Chrome 확장 연결 전',connected?'앱과 확장이 통신하고 있습니다. 사이트 응답 관찰 상태는 아래에서 별도로 확인합니다.':'연결 코드를 Chrome 확장에 입력하세요.');
-  if(extensionUpdateRequired||connected&&extensionVersion!==undefined&&!seatExtensionCompatible(extensionVersion))add('extension','error','확장 업데이트가 필요합니다.','문자 열과 진단 개선에는 v0.9.4 이상 확장이 필요합니다. 현재 배포 폴더의 chrome-extension으로 업데이트하고 다시 연결하세요.');
-  else if(connected)add('extension',seatExtensionCompatible(extensionVersion)?'ok':'warning',seatExtensionCompatible(extensionVersion)?'확장 버전 호환 확인':'확장 버전 확인 필요','문자 열과 진단 개선에는 v0.9.4 이상 확장을 사용하세요.');
+  if(extensionUpdateRequired||connected&&extensionVersion!==undefined&&!seatExtensionCompatible(extensionVersion))add('extension','error','확장 업데이트가 필요합니다.','클릭 없는 전체 진행에는 v0.9.18 이상 확장이 필요합니다. 현재 배포 폴더의 chrome-extension으로 업데이트하고 다시 연결하세요.');
+  else if(connected)add('extension',seatExtensionCompatible(extensionVersion)?'ok':'warning',seatExtensionCompatible(extensionVersion)?'확장 버전 호환 확인':'확장 버전 확인 필요','클릭 없는 전체 진행에는 v0.9.18 이상 확장을 사용하세요.');
   add('target',target?'ok':'error',target?'대상 탭 확인':'예매 탭을 선택하세요.',target?'현재 선택한 탭을 기준으로 점검했습니다.':'경기 목록 또는 예매창을 열고 대상 탭을 선택하세요.');
   const stages={listing:'경기 목록',gate:'예매 준비',seat:'좌석 선택',unsupported:'지원 여부 미확인'};
   if(target)add('page',pageStage==='unsupported'?'error':'ok','현재 화면 · '+stages[pageStage],pageStage==='seat'?'좌석 선택 단계의 화면을 읽습니다.':'예매창 진입 후 좌석 구조를 추가로 확인해야 합니다.');
-  add('scope',inspectionOnly||preferences.autoComplete===false?'warning':'ok',inspectionOnly?'진입만 확인 · 좌석 선택 안 함':preferences.autoComplete===false?'좌석 선택까지만 · 다음 단계 이동 안 함':'좌석 선택 → 선택 완료 → 다음 화면 확인',inspectionOnly?'좌석까지 진행하려면 진입 확인만 체크를 해제하세요.':preferences.autoComplete===false?'선택 완료까지 진행 설정이 꺼져 있습니다.':'가격·할인 화면 도착까지만 확인합니다. 결제는 직접 진행합니다.');
+  add('scope',inspectionOnly||preferences.stopAfterCaptcha||preferences.autoComplete===false?'warning':'ok',inspectionOnly?'진입만 확인 · 좌석 선택 안 함':preferences.stopAfterCaptcha?'보안문자 후 기록·정지':preferences.autoComplete===false?'좌석 선택까지만 · 다음 단계 이동 안 함':'좌석 선택 → 선택 완료 → 다음 화면 확인',inspectionOnly?'좌석까지 진행하려면 진입 확인만 체크를 해제하세요.':preferences.stopAfterCaptcha?'인증 이후 정보를 기록하고 좌석 선택 전에 멈춥니다.':preferences.autoComplete===false?'선택 완료까지 진행 설정이 꺼져 있습니다.':'성인 수량 선택과 N매 예매하기 후 다음 화면을 확인합니다. 결제는 직접 진행합니다.');
   if(connected&&target){
     add('observer',networkHealthy===true?'ok':networkHealthy===false?'error':'warning',networkHealthy===true?'사이트 응답 관찰 연결 정상':'사이트 응답 관찰 확인 필요',networkHealthy===true?'지금 연결 상태를 확인했습니다. 이후 화면 변경이나 다른 도구의 연결로 해제될 수 있습니다.':'Chrome 개발자 도구나 다른 브라우저 제어와 충돌하는지 확인하고 다시 점검하세요.');
     if(readFailed)add('read','error','현재 화면을 읽지 못했습니다.','탭 전환이 끝난 뒤 다시 점검하세요. 진행 중인 선택은 Chrome에서 먼저 확인하세요.');

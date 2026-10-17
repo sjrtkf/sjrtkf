@@ -6,6 +6,33 @@ const ORIGIN='chrome-extension://'+'a'.repeat(32);
 function post(bridge,path,body={},options={}){return new Promise((resolve,reject)=>{const req=http.request({hostname:'127.0.0.1',port:bridge.port,path,method:options.method||'POST',headers:{Origin:options.origin||ORIGIN,'Content-Type':'application/json',...(options.token?{Authorization:'Bearer '+options.token}:{}),...options.headers}},res=>{const chunks=[];res.on('data',c=>chunks.push(c));res.on('end',()=>{let body;try{body=JSON.parse(Buffer.concat(chunks).toString()||'null');}catch{}resolve({status:res.statusCode,body});});});req.on('error',reject);req.end(JSON.stringify(body));});}
 async function start(t){const bridge=new BrowserBridge({port:0,requestTimeoutMs:1000});await bridge.start();t.after(()=>bridge.close());return bridge;}
 async function pair(bridge){const result=await post(bridge,'/pair',{code:bridge.getState().pairCode});assert.equal(result.status,200);return result.body.token;}
+
+test('saved pairing reconnects after app restart without resuming old commands and revokes on reset',async t=>{
+  let saved;const pairingStore={load:()=>saved,save:value=>{saved=structuredClone(value);},clear:()=>{saved=null;}};
+  const first=new BrowserBridge({port:0,pairingStore});await first.start();t.after(()=>first.close());const token=await pair(first);
+  const oldCommand=first.request({action:'tabs.list'}),rejected=assert.rejects(oldCommand,/종료/),oldId=first.queue[0].id;await first.close();await rejected;
+  const next=new BrowserBridge({port:0,pairingStore});await next.start();t.after(()=>next.close());
+  assert.equal(next.getState().paired,true);assert.equal(next.getState().pairCode,null);assert.equal(next.connected,false);assert.equal(next.queue.length,0);
+  assert.equal((await post(next,'/heartbeat',{version:'0.9.18',capabilities:['extension.reload','captcha.ocr']},{token})).status,200);
+  assert.equal(next.getState().extensionVersion,'0.9.18');assert.equal(next.getState().extensionReloadSupported,true);
+  assert.equal((await post(next,'/heartbeat',{}, {token,origin:'chrome-extension://'+'b'.repeat(32)})).status,403);
+  const pending=next.request({action:'tabs.list'}),newId=next.queue[0].id;assert.notEqual(newId,oldId);
+  await post(next,'/result',{id:oldId,value:'late'},{token});assert.equal(next.pending.has(newId),true);
+  await post(next,'/result',{id:newId,value:[]},{token});await pending;
+  next.refreshPairing();assert.equal(saved,null);assert.notEqual((await post(next,'/heartbeat',{}, {token})).status,200);
+});
+
+test('a failed credential save does not create a trusted pairing',async t=>{
+  const bridge=new BrowserBridge({port:0,pairingStore:{load:()=>null,save(){throw Error('disk');}}});await bridge.start();t.after(()=>bridge.close());
+  assert.equal((await post(bridge,'/pair',{code:bridge.getState().pairCode})).status,400);assert.equal(bridge.getState().paired,false);
+});
+
+test('a transient heartbeat timeout retains pairing instead of returning a credential revocation',async t=>{
+  const bridge=await start(t),token=await pair(bridge),poll=post(bridge,'/poll',{}, {token});
+  while(!bridge.poll)await new Promise(r=>setImmediate(r));
+  bridge.disconnect('heartbeat timeout');assert.equal((await poll).status,503);assert.equal(bridge.getState().paired,true);
+  assert.equal((await post(bridge,'/heartbeat',{}, {token})).status,200);assert.equal(bridge.connected,true);
+});
 test('only exact ticket sites and supported paths are allowed; navigation queries are removed',()=>{
   for(const url of ['https://nol.yanolja.com/ticket','https://nol.yanolja.com/ticket/genre/sports/bears','https://tickets.interpark.com/goods/12345678','https://tickets.interpark.com/gates/ticket/12345678','https://tickets.interpark.com/onestop/seat?token=SECRET&step=price','https://ticket.interpark.com/Book/BookSession.asp','https://ticket.interpark.com/SportsBook/BookSeat.asp'])assert.equal(allowedUrl(url),true,url);
   for(const url of ['http://tickets.interpark.com/onestop/seat','https://tickets.interpark.com:8443/onestop/seat','https://tickets.interpark.com.evil/onestop/seat','https://x@tickets.interpark.com/onestop/seat','https://nol.yanolja.com/ticket-evil','https://tickets.interpark.com/gates/ticket/12345678evil'])assert.equal(allowedUrl(url),false,url);

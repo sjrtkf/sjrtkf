@@ -36,14 +36,15 @@
       if (s.results.length > 256) s.results.splice(0,s.results.length-256);
       sendSnapshot(s.tabId);
     }
-    function finishEntry(s, requestId, kind, p, overrideStatus) {
+    function finishEntry(s, requestId, kind, p, overrideStatus, verdict) {
       const r = s.pending.get(requestId); if (!r || r.category !== 'entry') return;
       s.pending.delete(requestId);
       const event = {kind,atMono:now(),seq:r.seq};
       const status = overrideStatus ?? r.statusCode;
       if (Number.isInteger(status) && status >= 100 && status <= 599) event.status=status;
       if (Number.isFinite(p.timestamp) && Number.isFinite(r.startedAt) && p.timestamp >= r.startedAt) event.durationMs=(p.timestamp-r.startedAt)*1000;
-      publish({type:'entry',tabId:s.tabId,event});
+      if(verdict){event.outcome=verdict.outcome;event.code=verdict.code;}
+        publish({type:'entry',tabId:s.tabId,event});
     }
     function lost(s, reason = 'unknown', detachReason) {
       if (!current(s) || s.lossReported) return;
@@ -71,12 +72,19 @@
       let u,body;try { u=new URL(request.url); } catch { return null; }
       if (u.origin!=='https://tickets.interpark.com' || u.pathname!=='/onestop/gql' || request.method!=='POST' || u.username || u.password) return null;
       try { body=JSON.parse(request.postData); } catch { return null; }
-      if (!body || !/\bquery\s+GetRemainSeats\b/.test(body.query||'') || (body.operationName && body.operationName!=='GetRemainSeats')) return null;
-      return {contextKey:JSON.stringify(body.variables || {})};
+      const operation=body?.query?.match(/\bquery\s+(GetRemainSeats|GetSeatGradePrices)\b/)?.[1];
+      if (!operation || (body.operationName && body.operationName!==operation)) return null;
+      return {contextKey:JSON.stringify(body.variables || {}),field:operation==='GetSeatGradePrices'?'getSeatGradePrices':'getRemainSeats'};
     }
     async function onEvent(source,method,p) {
-      if (source?.sessionId || !Number.isInteger(source?.tabId) || !p || typeof p.requestId!=='string') return;
+      if (source?.sessionId || !Number.isInteger(source?.tabId) || !p) return;
       const s=states.get(source.tabId); if (!s?.healthy) return;
+      if(method==='Page.javascriptDialogOpening'){
+        // Alert text can contain private data. Report only its presence/type;
+        // no generic confirmation can be inferred from an alert or confirm.
+        publish({type:'native-dialog',tabId:s.tabId,dialogType:['alert','confirm','prompt','beforeunload'].includes(p.type)?p.type:'unknown'});return;
+      }
+      if(typeof p.requestId!=='string')return;
       const id=p.requestId;
       if (method==='Network.requestWillBeSent') {
         const old=s.pending.get(id);
@@ -99,7 +107,7 @@
           const grade=gradesRequest(request);
           if (grade) {
             if (s.contextKey!==null && s.contextKey!==grade.contextKey) reset(s.tabId,'context');
-            s.contextKey=grade.contextKey;record={category:'grades'};
+            s.contextKey=grade.contextKey;record={category:'grades',field:grade.field};
           } else {
             const seat=parsers.seatNetwork.classifyRequest(request);
             if (seat) record={category:'seat',...seat,seq:++s.sequence};
@@ -121,7 +129,11 @@
         return;
       }
       if (method!=='Network.loadingFinished') return;
-      if (record.category==='entry') {finishEntry(s,id,'finished',p);return;}
+      if (record.category==='entry') {
+        const generation=s.generation;let verdict={outcome:'unknown',code:'BODY_UNAVAILABLE'};
+        try{if(p.encodedDataLength>65536)throw Error();const raw=await chrome.debugger.sendCommand({tabId:s.tabId},'Network.getResponseBody',{requestId:id});verdict=parsers.entryNetwork.classifyEntryResponse(record.statusCode,decodeBody(raw,65536));}catch{}
+        if(current(s,generation)&&s.pending.get(id)===record)finishEntry(s,id,'finished',p,undefined,verdict);return;
+      }
       const generation=s.generation;
       try {
         if (record.category!=='seat' && record.statusCode!==200) {s.pending.delete(id);return;}
@@ -141,7 +153,7 @@
             if (rows.length>50000) throw Error('seat limit');
             for(let offset=0;offset<rows.length;offset+=1000)publish({type:'metadata',tabId:s.tabId,rows:rows.slice(offset,offset+1000)});
           } else {
-            const values=JSON.parse(body)?.data?.getRemainSeats;
+            const values=JSON.parse(body)?.data?.[record.field];
             if (Array.isArray(values)) publish({type:'grades',tabId:s.tabId,rows:values.filter(r=>r && r.seatGrade!=null && String(r.seatGrade).length<=300 && typeof r.seatGradeName==='string' && r.seatGradeName.length<=300).slice(0,500).map(r=>({code:String(r.seatGrade),name:r.seatGradeName}))});
           }
         }
@@ -156,6 +168,11 @@
       const s=states.get(source?.tabId);
       if(s)lost(s,reason==='target_closed'?'target-closed':'debugger-detached',reason);
     });
+    const setBackground=async(tabId,enabled)=>{
+      const s=states.get(tabId);if(!s)return false;
+      await chrome.debugger.sendCommand({tabId},'Emulation.setFocusEmulationEnabled',{enabled});
+      s.backgroundEnabled=enabled;return true;
+    };
     const detach=async (tabId,cancelAttach=true,reason='manual-detach')=> {
       if(cancelAttach && attaching.has(tabId))attaching.get(tabId).cancelled=true;
       popupParents.delete(tabId);
@@ -172,13 +189,14 @@
         const tab=await chrome.tabs.get(tabId);
         if(operation.cancelled)throw Error('연결이 취소되었습니다.');
         if (!tabAllowed(tab)) throw Error('지원하는 NOL 야구 예매 페이지에서 연결해 주세요.');
-        if (states.get(tabId)?.healthy) return snapshot(tabId);
+        if (states.get(tabId)?.healthy) {await setBackground(tabId,true);return snapshot(tabId);}
         if (states.has(tabId)) await detach(tabId,false);
         if(operation.cancelled)throw Error('연결이 취소되었습니다.');
         const s={tabId,generation:0,sequence:0,entrySequence:0,healthy:false,pending:new Map(),results:[],contextKey:null};
         states.set(tabId,s);sendSnapshot(tabId);
         try {
           await chrome.debugger.attach({tabId},'1.3');
+          await chrome.debugger.sendCommand({tabId},'Page.enable');
           if (!current(s) || operation.cancelled) {try{await chrome.debugger.detach({tabId});}catch{}throw Error('연결이 취소되었습니다.');}
           // Attach may finish after the user navigates away; check again before enabling observation.
           if (!tabAllowed(await chrome.tabs.get(tabId))) throw Error('예매 페이지가 변경되어 연결을 중지했습니다.');
@@ -188,6 +206,9 @@
           if (!current(s) || operation.cancelled) throw Error('연결이 취소되었습니다.');
           if(s.generation===frameGeneration && typeof frame?.documentId==='string')s.documentId=frame.documentId;
           await chrome.debugger.sendCommand({tabId},'Network.enable',{maxTotalBufferSize:16000000,maxResourceBufferSize:12000000});
+          // Keeps this booking document active without raising or focusing the
+          // user's Chrome window. Detaching clears the emulation automatically.
+          await setBackground(tabId,true);
           if (!current(s) || operation.cancelled) throw Error('연결이 취소되었습니다.');
           s.healthy=true;reset(tabId,'attach');return snapshot(tabId);
         } catch {
@@ -215,7 +236,7 @@
       void attach(tab.id).catch(()=>popupParents.delete(tab.id));
     });
     chrome.tabs.onRemoved?.addListener(tabId=>{void detach(tabId,true,'target-closed');});
-    return {attach,detach,snapshot,reset,detachAll:()=>{for(const operation of attaching.values())operation.cancelled=true;popupParents.clear();return Promise.allSettled([...states.keys()].map(id=>detach(id)));}};
+    return {attach,detach,snapshot,reset,setBackground,detachAll:()=>{for(const operation of attaching.values())operation.cancelled=true;popupParents.clear();return Promise.allSettled([...states.keys()].map(id=>detach(id)));}};
   }
   root.createBaseballNetworkObserver=createBaseballNetworkObserver;
   if(typeof module!=='undefined' && module.exports)module.exports={createBaseballNetworkObserver,allowedTabUrl};

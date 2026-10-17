@@ -6,6 +6,11 @@ const parsers={metadata:require('../src/metadata'),seatNetwork:require('../src/s
 const metaUrl='https://tickets.interpark.com/onestop/api/seatMeta';
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
 const source={tabId:9};
+test('background execution is enabled without focusing windows and can be cleared then reenabled',async()=>{
+ const f=fixture();await f.observer.attach(9);await f.observer.setBackground(9,false);await f.observer.attach(9);
+ assert.deepEqual(f.commands.filter(c=>c.method==='Emulation.setFocusEmulationEnabled').map(c=>c.arg.enabled),[true,false,true]);
+ assert.ok(!f.commands.some(c=>/bringToFront|Input\./.test(c.method)));
+});
 function eventSource(){const listeners=[];return {addListener:fn=>listeners.push(fn),emit:(...args)=>listeners.forEach(fn=>fn(...args))};}
 function fixture(parserOverrides={}){
  const events=[],commands=[],responses=new Map();let tabUrl='https://tickets.interpark.com/onestop/seat';
@@ -23,7 +28,7 @@ test('only explicitly selected supported ticket tabs can attach; missing observa
  for(const url of ['https://tickets.interpark.com.evil.invalid/onestop/seat','http://tickets.interpark.com/onestop/seat','https://user:pass@tickets.interpark.com/onestop/seat'])assert.equal(allowedTabUrl(url),false);
  f.setUrl('https://nol.yanolja.com/ticket/genre/sports/bears');await Promise.all([f.observer.attach(9),f.observer.attach(9)]);
  assert.equal(f.commands.filter(c=>c.method==='attach').length,1);assert.equal(f.observer.snapshot(9).healthy,true);
- assert.deepEqual(f.commands.map(c=>c.method),['attach','Network.enable']);
+ assert.deepEqual(f.commands.map(c=>c.method),['attach','Page.enable','Network.enable','Emulation.setFocusEmulationEnabled']);
 });
 test('seat request stays pending until response decoding; only sanitized result leaves observer',async()=>{
  const f=fixture();await f.observer.attach(9);let respond;f.responses.set('seat',new Promise(r=>respond=r));
@@ -126,4 +131,21 @@ test('only popups of a watched tab can receive temporary blank-page observation'
  assert.equal(f.observer.snapshot(10).healthy,true);assert.equal(f.observer.snapshot(11).healthy,false);
  f.chrome.webNavigation.onCommitted.emit({tabId:10,frameId:0,url:'https://accounts.interpark.com/login',documentId:'login-doc'});await tick();
  assert.equal(f.observer.snapshot(10).healthy,false);assert.equal(f.events.find(e=>e.tabId===10&&e.documentId==='login-doc')?.snapshot?.healthy,false);
+});
+
+test('native dialogs are reported promptly without exposing text or auto-accepting',async()=>{const f=fixture();await f.observer.attach(9);f.chrome.debugger.onEvent.emit({tabId:9},'Page.javascriptDialogOpening',{type:'confirm',message:'private-token-secret',url:'https://tickets.interpark.com/onestop/seat'});await tick();assert.ok(f.events.some(e=>e.type==='native-dialog'&&e.dialogType==='confirm'));assert.equal(JSON.stringify(f.events).includes('private-token'),false);assert.equal(f.commands.some(c=>c.method==='Page.handleJavaScriptDialog'),false);});
+
+test('map grade-price responses publish names without identity fields or prices',async()=>{
+ const f=fixture();await f.observer.attach(9);const request=grade();request.postData=request.postData.replaceAll('GetRemainSeats','GetSeatGradePrices').replaceAll('getRemainSeats','getSeatGradePrices');
+ f.responses.set('prices',{body:JSON.stringify({data:{getSeatGradePrices:[null,{seatGrade:'01',seatGradeName:'1루 오렌지석',salePrice:99999}]}})});f.request('prices',request);f.finish('prices');await tick();
+ assert.deepEqual(f.events.find(e=>e.type==='grades').rows,[{code:'01',name:'1루 오렌지석'}]);assert.ok(!JSON.stringify(f.events).includes('99999'));
+});
+
+
+test('entry body classification emits only a result code, never signed redirect data',async()=>{
+ const f=fixture();await f.observer.attach(9);
+ f.responses.set('entry',{body:JSON.stringify({redirectUrl:'https://tickets.interpark.com/waiting?key=secret-queue-value'})});
+ f.request('entry',{url:'https://ent-waiting-api.interpark.com/waiting/api/secure-url',method:'POST'});f.finish('entry');await tick();
+ assert.equal(f.events.find(e=>e.event?.kind==='finished').event.outcome,'redirect-ready');
+ assert.equal(JSON.stringify(f.events).includes('secret-queue-value'),false);
 });

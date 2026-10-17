@@ -18,7 +18,7 @@ function fixture(){
   const main={textContent:'예매 준비가 완료됐어요',querySelectorAll(){return [button];}};
   const document={body:{},hidden:false,modal:false,querySelector(){return main;},querySelectorAll(){return this.modal?[dialog]:[];}};
   class FakeDate extends Date{static now(){return wall;}}
-  const context=vm.createContext({
+  const context=vm.createContext({siteInvoke:(e,kind,value)=>{if(kind==='change'){e.value=value;e.siteChange?.(value);return;}return e.click();},
     window:{},document,location:{origin:'https://tickets.interpark.com',pathname:'/gates/ticket/'+GOODS},
     performance:{now:()=>mono,timeOrigin:1789700000000},Date:FakeDate,getComputedStyle:()=>({display:'block',visibility:'visible'}),
     setTimeout(fn,delay=0){const id=nextTimer++;timers.set(id,{fn,due:mono+Math.max(0,Number(delay)||0)});return id;},
@@ -65,7 +65,7 @@ test('타이머와 자연 활성화 감지의 순서가 달라도 공통 잠금�
     f.advance(100);f.notify();f.advance(2000);
     for(const observer of f.observers)observer.fn([],observer);
     assert.equal(f.clicks(),1,first);
-    assert.equal(status.trigger,first==='clock'?'server-clock':'activation');
+    assert.equal(status.trigger,'server-clock');
     assert.equal(f.run(entry.setGateClock,f.config()),false,'completed latch cannot be rearmed');
   }
 });
@@ -77,8 +77,8 @@ test('기한에도 비활성이라면 DOM을 바꾸지 않고 이후 자연 활�
   f.activate();f.notify();assert.equal(f.clicks(),1);assert.equal(status.trigger,'activation');
 });
 
-test('시각 도달 시 모달 또는 숨겨진 화면이면 시각 클릭을 보류하고 기존 감지를 유지한다',()=>{
-  for(const block of ['modal','hidden']){
+test('시각 도달 시 모달이면 실행을 보류하고 기존 감지를 유지한다',()=>{
+  for(const block of ['modal']){
     const f=fixture(),status=f.arm();f.clock();f.advance(99);f.activate();f.document[block]=true;
     f.advance(100);assert.equal(f.clicks(),0,block);assert.equal(status.clock.outcome,'not-ready');
     f.document[block]=false;f.notify();assert.equal(f.clicks(),1,block);assert.equal(status.trigger,'activation');
@@ -157,4 +157,8 @@ test('같은 상품과 실행이어도 새 문서는 이전 문서의 시각 보
   assert.equal(current.clock.outcome,'not-configured');
   assert.equal(f.clock(),true,'current-document calibration remains usable');
   f.advance(99);f.activate();f.advance(100);assert.equal(f.clicks(),1);
+});
+
+test('a hidden page executes the scheduled function at the deadline without waiting for focus',()=>{
+ const f=fixture(),status=f.arm();f.document.hidden=true;f.clock();f.advance(99);f.activate();f.notify();assert.equal(f.clicks(),0);f.advance(100);assert.equal(f.clicks(),1);assert.equal(status.trigger,'server-clock');
 });

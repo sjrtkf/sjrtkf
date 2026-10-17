@@ -167,6 +167,14 @@ module.exports=async function panelSmoke({app,win,bridge,command}){
     await evaluate("showPageInfo({title:'공식 공지',checkedAt:Date.now(),empty:true,cardCount:0,maxTickets:4,mobileOnly:true,cardOnly:true,notes:['1인 최대 4매','모바일 티켓 발권','카드 결제만 가능']},0)");
     const noteCount=await evaluate("document.querySelectorAll('#pageNotes li').length");
     check('페이지 공지와 요약 속성의 같은 안내 중복 방지',()=>assert.equal(noteCount,3));
+
+    await evaluate("showOpening({openAt:Date.parse('2026-10-15T15:00:00+09:00'),openingSource:'공식 경기 API',enabled:true})");
+    const opening=await evaluate("({text:document.getElementById('official').textContent,value:document.getElementById('openAt').value})");
+    check('지난 공식 판매 시작 시각도 출처와 함께 자동 입력',()=>{assert.match(opening.text,/공식 경기 API/);assert.equal(opening.value,'2026-10-15T15:00');});
+    await evaluate("document.getElementById('runMode').value='observe';document.getElementById('runMode').onchange()");
+    const mode=await evaluate("({observe:readPrefs().stopAfterCaptcha,entry:document.getElementById('inspectionOnly').checked,tabs:[...document.querySelectorAll('.steps [role=tab]')].filter(e=>!e.hidden).length})");
+    check('실행 범위 하나로 통합 · 네 개 기본 탭',()=>{assert.equal(mode.observe,true);assert.equal(mode.entry,false);assert.equal(mode.tabs,4);});
+    await evaluate("document.getElementById('runMode').value='full';document.getElementById('runMode').onchange();document.getElementById('openAt').value=''");
     await evaluate(`showClock({source:'ticket-server',offsetMs:150,uncertaintyMs:20,measuredAt:Date.UTC(2026,8,18,2,0,0)});`);
     ui=await read();
     check('서버 시계의 빠름 · 초 단위 오차 · 측정 당시 설명',()=>{
@@ -222,10 +230,10 @@ module.exports=async function panelSmoke({app,win,bridge,command}){
     ui=await publish({...connected,revision:++fixtureRevision,running:true,runStatus:'로컬 진단 상태',runDiagnostics:{...diagnostics,diagnosis:{...diagnostics.diagnosis,title:'현재 화면 확인 중'},metrics:{...diagnostics.metrics,elapsedMs:13000,pendingCount:1}}});
     check('실행 중 진단은 최신 단계·경과 시간·처리 중 명령을 표시',()=>{assert.equal(ui.diagnosisTitle,'현재 화면 확인 중');assert.match(ui.metricsElapsed,/13.00초 · 처리 중 1건/);assert.equal(ui.disabled.preflight,true);});
     ui=await publish({...connected,revision:++fixtureRevision,running:true,runStatus:'로컬 실행 상태 검증'});
-    check('진행 중 조건 변경 잠금 · 중지와 직접 보안문자 입력 유지',()=>{
+    check('진행 중 조건 변경·수동 입력 잠금 · 중지와 화면 확인 유지',()=>{
       for(const id of ['home','target','games','save','quantity','scan'])assert.equal(ui.disabled[id],true,id);
-      for(const id of ['focus','code','submitCode','stop'])assert.equal(ui.disabled[id],false,id);
-      assert.equal(ui.quickStopHidden,false);
+      for(const id of ['focus','code','stop'])assert.equal(ui.disabled[id],false,id);assert.equal(ui.disabled.submitCode,true);
+      assert.equal(ui.quickStopHidden,true);
       assert.ok(ui.profileControlsDisabled.every(Boolean),'구장 변경·참고 적용·진입 설정도 실행 중 잠금');
       assert.deepEqual(ui.shownPanels,['run']);assert.equal(ui.dockVisible,true);
       for(const id of ['captchaRead','captchaSubmit','captchaTarget','autoCaptcha'])assert.equal(ui.disabled[id],true,id);
@@ -241,37 +249,11 @@ module.exports=async function panelSmoke({app,win,bridge,command}){
     check('열린 좌석 화면 시작은 사용자 버튼 한 번으로 시작 명령만 전달 · 오픈 시각 미전달',()=>{assert.deepEqual(seatStartCalls.map(call=>call.action),['start']);assert.equal(seatStartCalls[0].payload.key,'');assert.equal(seatStartCalls[0].payload.openAt,null);assert.equal(seatStartCalls[0].payload.inspectionOnly,false);});
     ui=await publish({...concert,revision:++fixtureRevision,windows:[{id:702,title:'지원하지 않는 페이지',url:'https://tickets.interpark.com/onestop/seat-extra'}]});
     check('비슷한 URL은 좌석 화면으로 인정하지 않음',()=>{assert.equal(ui.disabled.start,true);assert.notEqual(ui.startLabel,'현재 좌석 화면에서 시작');});
-    const manualPreview=await evaluate("(()=>{const canvas=document.createElement('canvas');canvas.width=210;canvas.height=70;const context=canvas.getContext('2d');context.fillStyle='#ffffff';context.fillRect(0,0,210,70);context.fillStyle='#193149';context.font='bold 28px monospace';context.fillText('ABCXYZ',45,46);return canvas.toDataURL('image/png');})()");
-    const manualReady={present:true,supported:true,status:'ready',challengeId:'fixture-a',imageDataUrl:manualPreview,existingText:'',message:'이미지를 보고 직접 입력하세요.',targetId:702,busy:false};
-    ui=await publish({...concert,revision:++fixtureRevision,running:true,manualCaptcha:manualReady});
-    await evaluate("document.getElementById('manualCaptchaPreview').decode()");ui=await read();
-    check('직접 입력 기본 설정 · 자동 진행 중 이미지 준비와 인간 입력 허용',()=>{
-      assert.equal(ui.manualCaptchaAssist,true);assert.equal(ui.autoCaptcha,false);assert.equal(ui.disabled.autoCaptcha,true);
-      assert.match(ui.autoCaptchaSummary,/보안문자 직접 입력 · 이미지 확대·입력칸 준비/);assert.deepEqual(ui.shownPanels,['captcha']);
-      assert.equal(ui.disabled.manualCaptchaPrepare,false);assert.equal(ui.disabled.manualCaptchaText,false);assert.equal(ui.disabled.manualCaptchaSubmit,true);assert.equal(ui.manualCaptchaPreview,manualPreview);
-      assert.equal(ui.manualCaptchaImageSize.naturalWidth,210);assert.equal(ui.manualCaptchaImageSize.naturalHeight,70);
-      assert.ok(Math.abs(ui.manualCaptchaImageSize.width/ui.manualCaptchaImageSize.height-3)<.02,'원본 가로·세로 비율을 유지');
-    });
-    const noAutomaticSubmission=await evaluate("(()=>{const originalRun=run,calls=[];try{run=async(action)=>{calls.push(action);return {};};const input=document.getElementById('manualCaptchaText');input.focus();input.value='abcxyz';input.oninput();return {calls,value:input.value};}finally{run=originalRun;}})()");
-    check('직접 작성한 소문자를 대문자로 변환 · 6자리 도달만으로 제출하지 않음',()=>{assert.equal(noAutomaticSubmission.value,'ABCXYZ');assert.deepEqual(noAutomaticSubmission.calls,[]);});
-    ui=await publish({...concert,revision:++fixtureRevision,running:true,manualCaptcha:{...manualReady,message:'같은 이미지 상태 갱신'}});
-    check('같은 이미지 상태 갱신은 작성 중 텍스트와 입력 포커스를 유지',()=>{assert.equal(ui.manualCaptchaText,'ABCXYZ');assert.equal(ui.activeElement,'manualCaptchaText');});
-    ui=await publish({...concert,revision:++fixtureRevision,running:true,manualCaptcha:{...manualReady,challengeId:'fixture-b'}});
-    check('보안문자 교체 시 이전 작성값과 제출 가능 상태를 무효화',()=>{assert.equal(ui.manualCaptchaText,'');assert.equal(ui.disabled.manualCaptchaSubmit,true);});
-    const manualRoutes=await evaluate(`(async()=>{const originalRun=run,calls=[];let resolveSubmit;try{run=async(action,payload)=>{calls.push({action,payload});if(action==='manualCaptchaSubmit')return new Promise(resolve=>{resolveSubmit=resolve;});return {};};await document.getElementById('manualCaptchaPrepare').onclick();await document.getElementById('manualCaptchaFocus').onclick();const input=document.getElementById('manualCaptchaText');input.value='ABC';await document.getElementById('manualCaptchaSubmit').onclick();const shortMessage=document.getElementById('manualCaptchaStatus').textContent;input.value='abcxyz';input.oninput();const first=input.onkeydown({key:'Enter',isComposing:false,repeat:false,preventDefault(){}});await document.getElementById('manualCaptchaSubmit').onclick();await input.onkeydown({key:'Enter',isComposing:false,repeat:true,preventDefault(){}});const inFlight=calls.filter(call=>call.action==='manualCaptchaSubmit').length;resolveSubmit({});await first;await document.getElementById('manualCaptchaSubmit').onclick();return {calls,shortMessage,inFlight};}finally{run=originalRun;lockControls();}})()`);
-    check('짧은 입력 거부 · 명시적 Enter만 제출 · 중복 클릭과 키 반복 방지',()=>{
-      assert.match(manualRoutes.shortMessage,/영문 6자리/);assert.equal(manualRoutes.inFlight,1);
-      assert.deepEqual(manualRoutes.calls.map(call=>call.action),['manualCaptchaPrepare','manualCaptchaFocus','manualCaptchaSubmit']);
-      assert.deepEqual(manualRoutes.calls[2].payload,{challengeId:'fixture-b',text:'ABCXYZ'});
-    });
-    ui=await publish({...concert,revision:++fixtureRevision,target:701,manualCaptcha:manualReady});
-    check('다른 대상 탭으로 바꾸면 기존 이미지·작성값·제출 기능을 지움',()=>{assert.equal(ui.manualCaptchaText,'');assert.equal(ui.manualCaptchaPreview,null);assert.equal(ui.disabled.manualCaptchaSubmit,true);});
-    ui=await publish({...concert,revision:++fixtureRevision,manualCaptcha:{...manualReady,challengeId:'fixture-external',imageDataUrl:'https://example.invalid/captcha.png'}});
-    check('직접 입력 미리보기는 로컬 이미지 데이터만 표시',()=>{assert.equal(ui.manualCaptchaPreview,null);assert.equal(ui.disabled.manualCaptchaText,true);});
-    ui=await publish({...concert,revision:++fixtureRevision,manualCaptcha:{...manualReady,challengeId:'fixture-human-input',status:'manual',existingText:'ABCXYZ',message:'예매창에 직접 입력한 내용은 덮어쓰지 않습니다.'}});
-    check('Chrome에서 이미 작성한 내용은 표시만 하고 덮어쓰기·중복 전송을 잠금',()=>{assert.equal(ui.manualCaptchaText,'ABCXYZ');assert.equal(ui.disabled.manualCaptchaText,true);assert.equal(ui.disabled.manualCaptchaSubmit,true);});
-    ui=await publish({...concert,revision:++fixtureRevision,captchaStatus:{...captchaReady,busy:true},manualCaptcha:manualReady});
-    check('기존 보안문자 작업 중에는 수동 준비·제출 중복을 차단',()=>{assert.equal(ui.disabled.manualCaptchaPrepare,true);assert.equal(ui.disabled.manualCaptchaSubmit,true);});
+    await evaluate("showPrefs({quantity:2,areas:[],blocks:[],tiers:[],requireTogether:true,excludeObstructed:true,autoComplete:true,autoNotice:true,autoCaptcha:false,manualCaptchaAssist:true});lockControls();updateOverview();");
+    ui=await read();
+    check('이전 직접 입력 설정을 불러와도 자동 인식·입력·확인이 항상 적용',()=>{assert.equal(ui.autoCaptcha,true);assert.equal(ui.manualCaptchaAssist,false);assert.equal(ui.disabled.autoCaptcha,true);assert.match(ui.autoCaptchaSummary,/자동 인식\s*·\s*입력\s*·\s*확인/);});
+    const autoOnly=await evaluate("({prefs:readPrefs(),manualHidden:document.querySelector('.manual-captcha-card').hidden,legacyHidden:document.getElementById('securityDetails').hidden})");
+    check('자동 진행 화면에서 수동 입력 카드는 숨기고 저장 설정도 자동으로 고정',()=>{assert.equal(autoOnly.prefs.autoCaptcha,true);assert.equal(autoOnly.prefs.manualCaptchaAssist,false);assert.equal(autoOnly.manualHidden,true);assert.equal(autoOnly.legacyHidden,true);});
     ui=await publish(concert);
     await evaluate("document.getElementById('manualCaptchaAssist').checked=false;document.getElementById('manualCaptchaAssist').onchange();document.getElementById('autoCaptcha').checked=true;document.getElementById('autoCaptcha').onchange()");
     await evaluate("showStep('captcha')");ui=await read();
@@ -281,7 +263,7 @@ module.exports=async function panelSmoke({app,win,bridge,command}){
       assert.match(ui.text,/예매 진입이나 좌석 선택을 시작하지 않습니다/);assert.equal(ui.autoCaptcha,true);
     });
     await evaluate("document.getElementById('autoCaptcha').checked=false;updateOverview()");ui=await read();
-    check('자동 보안문자를 끄면 수동 처리 요약에 반영',()=>assert.match(ui.autoCaptchaSummary,/직접 입력 사용/));
+    check('이전 자동 해제 값으로도 자동 처리 요약 유지',()=>assert.match(ui.autoCaptchaSummary,/자동 인식\s*·\s*입력\s*·\s*확인/));
     await evaluate("document.getElementById('autoCaptcha').checked=true;updateOverview()");
     ui=await publish({...concert,revision:++fixtureRevision,captchaStatus:{...captchaReady,busy:true,mode:'submit',message:'로컬 보안문자 확인 대기'}});
     check('독립 보안문자 처리 중 다른 동작과 수동 중복 입력 잠금 · 중지는 허용',()=>{
@@ -348,12 +330,26 @@ module.exports=async function panelSmoke({app,win,bridge,command}){
     await evaluate("showPageInfo({title:'2026 KBO 포스트시즌 - 와일드카드',checkedAt:Date.UTC(2026,9,15,0,0),empty:true,cardCount:0,maxTickets:4,mobileOnly:true,cardOnly:true,notes:['로컬 화면 검증용 데이터입니다.'],seatImages:[]},0);showStep('page');");
     await evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
     fs.writeFileSync(path.join(output,'preview-'+versionTag+'-page.png'),(await win.webContents.capturePage()).toPNG());
+    await evaluate(`showPrefs({quantity:2,requireTogether:true,excludeObstructed:true,areas:[],blocks:[],tiers:[],autoComplete:true,autoNotice:true});showStep('prefs');
+      currentCatalog={title:'현재 테스트 경기',message:'현재 경기에서 읽은 목록',areas:[{name:'블루존',code:'B'},{name:'테이블석',code:'T'}],blocks:[{code:'001:3-5',name:'3-5',areas:['블루존']},{code:'002:1-1',name:'1-1',areas:['테이블석']}],seats:[{id:'seat_block_fixture:12345',block:'001:3-5',area:'블루존',row:'13열',number:1}]};renderCatalog();
+      document.getElementById('areaChoice').options[0].selected=true;renderCatalogBlocks();document.getElementById('addArea').click();`);
+    const catalogArea=await evaluate("({prefs:readPrefs(),blocks:[...document.getElementById('blockChoice').options].map(o=>o.value),label:document.getElementById('areaChoice').options[0].textContent})");
+    check('현재 경기 목록에서 이름·코드 확인 후 구역만 추가하면 블록 제한 없음',()=>{assert.equal(catalogArea.prefs.areas,'블루존');assert.equal(catalogArea.prefs.blocks,'');assert.deepEqual(catalogArea.blocks,['001:3-5']);assert.match(catalogArea.label,/코드 B/);});
+    await evaluate("document.getElementById('blockChoice').options[0].selected=true;document.getElementById('addBlock').click();");
+    check('구역에 속한 블록 코드 추가 및 고정 통로 순위 표시',()=>{});
+    assert.equal((await evaluate('readPrefs()')).blocks,'001:3-5');assert.equal((await evaluate('readPrefs()')).priority,'aisle');
+    await evaluate("addTier({name:'대안'},true);document.getElementById('catalogTarget').value='3';document.getElementById('addBlock').click();");
+    assert.deepEqual((await evaluate('readPrefs()')).tiers.map(t=>[t.areas,t.blocks]),[['블루존','001:3-5']]);
+    check('선택한 구역·블록을 지정한 조건 묶음에 추가',()=>{});
+    win.setSize(360,600);await evaluate("document.getElementById('currentCatalog').scrollIntoView({block:'start'});");
+    ui=await read();check('이름·코드 목록과 좌석 코드 표의 좁은 화면 가로 넘침 없음',()=>assert.equal(ui.horizontalOverflow,false));
+    fs.writeFileSync(path.join(output,'preview-'+versionTag+'-catalog.png'),(await win.webContents.capturePage()).toPNG());win.setSize(400,900);
     await evaluate("showPrefs({quantity:2,requireTogether:true,excludeObstructed:true,priority:'front',areas:[],blocks:[],tiers:[{name:'앞열 통로',areas:['응원석'],blocks:[],minRow:1,maxRow:5,aisle:'required',priority:'front'}],autoComplete:true,autoNotice:true});showStep('prefs')");
     await evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
     fs.writeFileSync(path.join(output,'preview-'+versionTag+'-prefs.png'),(await win.webContents.capturePage()).toPNG());
     ui=await read();
     check('설정한 조건 묶음·열 범위·통로 요약 표시',()=>{
-      assert.match(ui.conditionSummary,/1순위 앞열 통로/);assert.match(ui.conditionSummary,/1~5열/);assert.match(ui.conditionSummary,/추정 통로 필수/);
+      assert.match(ui.conditionSummary,/1순위 앞열 통로/);assert.match(ui.conditionSummary,/1~5열/);assert.match(ui.conditionSummary,/통로 거리 → 앞열/);
       assert.match(ui.text,/A=1, B=2, …, Z=26/);
     });
     win.setSize(360,600);
@@ -366,13 +362,26 @@ module.exports=async function panelSmoke({app,win,bridge,command}){
     await evaluate("showStep('run');showClock({source:'ticket-server',offsetMs:150,uncertaintyMs:20,measuredAt:Date.UTC(2026,9,15,2,0,0)});");
     await evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
     fs.writeFileSync(path.join(output,'preview-'+versionTag+'-run.png'),(await win.webContents.capturePage()).toPNG());
+    await evaluate("document.getElementById('stopAfterCaptcha').checked=true;document.getElementById('stopAfterCaptcha').onchange();");
+    const recording=await evaluate("({preferences:readPrefs(),scope:document.getElementById('runScope').textContent,entryOnly:document.getElementById('inspectionOnly').checked,button:document.getElementById('recordObservation').textContent})");
+    check('보안문자 후 기록 모드도 자동 입력 후 좌석 전 정지 범위를 표시한다',()=>{assert.equal(recording.preferences.stopAfterCaptcha,true);assert.equal(recording.preferences.manualCaptchaAssist,false);assert.equal(recording.preferences.autoCaptcha,true);assert.equal(recording.entryOnly,false);assert.match(recording.scope,/정보 기록/);assert.match(recording.button,/현재 좌석 정보 기록/);});
+    await evaluate("document.getElementById('stopAfterCaptcha').scrollIntoView({block:'center'});");
+    fs.writeFileSync(path.join(output,'preview-'+versionTag+'-recording.png'),(await win.webContents.capturePage()).toPNG());
+    await evaluate("document.getElementById('inspectionOnly').checked=true;document.getElementById('inspectionOnly').onchange();");
+    check('진입만 확인과 보안문자 후 기록 모드는 동시에 켜지지 않는다',()=>assert.equal(recording.entryOnly,false));
+    assert.equal(await evaluate("document.getElementById('stopAfterCaptcha').checked"),false);
+    await evaluate("document.getElementById('inspectionOnly').checked=false;updateOverview();");
+    await evaluate("document.getElementById('selectionMethod').value='api';document.getElementById('selectionMethod').onchange();");
+    check('이전 API 설정을 사이트 코드 실행 방식으로 전달한다',()=>{});
+    assert.equal(await evaluate("readPrefs().selectionMethod"),'api');
+    await evaluate("document.getElementById('selectionMethod').value='click';updateOverview();");
     win.setSize(360,600);
     await evaluate(`showRunDiagnostics(${JSON.stringify(diagnostics)});document.getElementById('runAnalysis').open=true;document.getElementById('runAnalysis').scrollIntoView({block:'start'});`);
     await evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');ui=await read();
     check('최소 창 크기에서 실행 분석 표 가로 넘침 없음 · 실행 버튼 유지',()=>{assert.equal(ui.horizontalOverflow,false);assert.equal(ui.dockVisible,true);});
     fs.writeFileSync(path.join(output,'preview-'+versionTag+'-analysis.png'),(await win.webContents.capturePage()).toPNG());
     win.setSize(400,900);
-    await publish({...concert,revision:++fixtureRevision,manualCaptcha:{...manualReady,challengeId:'preview-fixture',message:'로컬 화면 예시 · 이미지를 보고 직접 입력하세요.'},captchaStatus:{...captchaReady,text:'WTCNBW',confidence:.98,mode:'read',message:'읽기만 완료 · Chrome 입력은 하지 않았습니다.'}});
+    await publish({...concert,revision:++fixtureRevision,captchaStatus:{...captchaReady,text:'WTCNBW',confidence:.98,mode:'read',message:'읽기만 완료 · Chrome 입력은 하지 않았습니다.'}});
     await evaluate("showStep('captcha')");
     await evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
     fs.writeFileSync(path.join(output,'preview-'+versionTag+'-captcha.png'),(await win.webContents.capturePage()).toPNG());

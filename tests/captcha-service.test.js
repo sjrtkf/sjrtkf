@@ -2,12 +2,31 @@
 const {test}=require('node:test'),assert=require('node:assert/strict');
 const {CaptchaService}=require('../src/captcha-service');
 const png='data:image/png;base64,aGVsbG8=';
+test('automatic retry refreshes low confidence, incorrect and disabled-submit images until verified',async()=>{
+  let image=1,submits=0;const refreshed=[];
+  const f=setup({ocr:{recognize:async()=>({valid:true,text:'WTCNBW',confidence:image===1?.1:.99})},adapter:{
+    snapshot:async()=>({present:true,supported:true,challengeId:String(image),imageDataUrl:png}),
+    submit:async()=>{submits++;return image===3?{submitted:false,status:'retry'}:{submitted:true};},
+    refresh:async({challengeId})=>{refreshed.push(challengeId);image++;return {refreshed:true};},
+    status:async({challengeId})=>challengeId!==String(image)?{status:'changed'}:image===2?{status:'incorrect'}:{status:'absent',supported:true}
+  }});
+  assert.equal((await f.execute('auto',{single:false})).status,'verified');
+  assert.deepEqual(refreshed,['1','2','3']);assert.equal(submits,3);
+});
+test('automatic refresh stops when cancelled and never refreshes a manual edit or uncertain request',async()=>{
+  const f=setup({ocr:{recognize:async()=>({valid:false})},adapter:{refresh:async()=>{f.service.cancel();return {refreshed:true};}}});
+  await assert.rejects(f.execute('auto',{single:false}),/중지/);
+  for(const status of ['manual','submitted']){
+    let refreshed=0;const g=setup({adapter:{status:async()=>({present:true,status}),refresh:async()=>{refreshed++;}}});
+    const result=await g.execute('auto',{single:false});assert.ok(['manual','uncertain'].includes(result.status));assert.equal(refreshed,0);
+  }
+});
 function setup(overrides={}){
   const calls=[],states=[];let time=0;
   const ocr={warmup:async()=>calls.push('warmup'),recognize:async()=>{calls.push('recognize');return {valid:true,text:'WTCNBW',confidence:.99};},close:async()=>calls.push('close'),...overrides.ocr};
   const adapter={assertCurrent(){},snapshot:async()=>{calls.push('snapshot');return {present:true,supported:true,challengeId:'a',imageDataUrl:png,existingText:''};},submit:async arg=>{calls.push(['submit',arg]);return {submitted:true};},status:async()=>{calls.push('status');return {present:false,status:'absent'};},...overrides.adapter};
   const service=new CaptchaService({ocr,onState:s=>states.push(s),now:()=>time,wait:async ms=>{calls.push(['wait',ms]);time+=ms;},resultTimeoutMs:200,...overrides.options});
-  const execute=(mode='submit',extra={})=>service.execute({mode,adapter,scope:'tab:document',...extra});
+  const execute=(mode='submit',extra={})=>service.execute({mode,adapter,scope:'tab:document',single:true,...extra});
   return {calls,states,service,adapter,execute};
 }
 test('OCR reads and submits immediately, then confirms the captcha disappeared',async()=>{
@@ -40,7 +59,7 @@ test('an uncertain lost submit response is not replayed by auto loop',async()=>{
   await assert.rejects(execute('auto'),/lost reply/);assert.equal((await execute('auto')).status,'uncertain');assert.equal(count,1);
 });
 test('changed challenge permits another attempt but total auto attempts are bounded',async()=>{
-  let challenge=0;const {execute,calls}=setup({adapter:{snapshot:async()=>({present:true,supported:true,challengeId:String(++challenge),imageDataUrl:png}),status:async()=>({present:true,status:'changed'})}});
+  let challenge=0;const {execute,calls}=setup({options:{maxAutoAttempts:3},adapter:{snapshot:async()=>({present:true,supported:true,challengeId:String(++challenge),imageDataUrl:png}),status:async()=>({present:true,status:'changed'})}});
   for(let i=0;i<3;i++)assert.equal((await execute('auto')).status,'changed');assert.equal((await execute('auto')).status,'manual');assert.equal(calls.filter(c=>Array.isArray(c)&&c[0]==='submit').length,3);
 });
 test('submit stale/manual protection errors are exposed without a verification claim',async()=>{
@@ -83,4 +102,16 @@ test('image errors show a failed state with preview and a later successful read 
   assert.equal(calls.some(c=>Array.isArray(c)&&c[0]==='submit'),false);
   fail=false;assert.equal((await execute('read')).status,'read');
   assert.equal(service.status.errorCode,null);
+});
+
+test('browser image read failure refreshes without passing unusable data to OCR',async()=>{let image=0,refreshes=0,reads=0;const f=setup({ocr:{recognize:async()=>{reads++;return {valid:true,text:'WTCNBW',confidence:.99};}},adapter:{snapshot:async()=>image?{present:true,supported:true,challengeId:'new',imageDataUrl:png}:{present:true,supported:true,status:'retry',challengeId:'bad',message:'image unreadable'},refresh:async()=>{image++;refreshes++;return {status:'changed'};}}});assert.equal((await f.execute('auto',{single:false})).status,'verified');assert.equal(refreshes,1);assert.equal(reads,1);});
+test('temporarily disabled refresh waits, sends once, and accepts popup disappearance',async()=>{let calls=0;const f=setup({ocr:{recognize:async()=>({valid:false})},adapter:{refresh:async()=>++calls===1?{status:'pending',refreshed:false}:{refreshed:true},status:async()=>({status:'absent',supported:true})}});assert.equal((await f.execute('auto',{single:false})).status,'absent');assert.equal(calls,2);});
+
+test('automatic CAPTCHA waits for image readiness and then recognizes without a manual mode',async()=>{
+  let reads=0;const f=setup({adapter:{snapshot:async()=>++reads<3?{present:true,status:'pending',supported:true}:{present:true,supported:true,challengeId:'ready',imageDataUrl:png}}});
+  assert.equal((await f.execute('auto',{single:false})).status,'verified');assert.equal(f.calls.filter(c=>c==='recognize').length,1);
+});
+test('an indefinitely pending CAPTCHA ends with a precise readiness error and no input',async()=>{
+  const f=setup({adapter:{snapshot:async()=>({present:true,status:'pending',supported:true})}});
+  const result=await f.execute('auto',{single:false});assert.equal(result.status,'uncertain');assert.match(result.message,/준비가 지연/);assert.equal(f.calls.some(c=>c==='recognize'||Array.isArray(c)&&c[0]==='submit'),false);
 });

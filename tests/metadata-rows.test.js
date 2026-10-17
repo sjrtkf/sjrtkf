@@ -31,6 +31,15 @@ test('unknown or mixed label formats remain ineligible instead of being guessed'
   assert.ok(rows.every(s=>s.row===null&&s.rowLabel===null&&s.rowKind===null));
   assert.equal(rankGroups(rows,{quantity:1}).length,0);
 });
+
+test('observed football area-qualified rows rank by row, not the digits in the area code',()=>{
+  const rows=read([seat('back','W1구역 10열',9,34),seat('front','W1구역 2열',1,34)]);
+  const groups=rankGroups(rows,{quantity:1,priority:'front'});
+  assert.deepEqual(groups.map(g=>g.seats[0].row),[2,10]);
+  assert.deepEqual(rows.map(s=>s.rowLabel),['10','2']);
+  const bad=read(['W1구역 10열 5번','W1 10','W1구역 10~12열','10열 뒤쪽'].map((s,i)=>seat('bad'+i,s,i,0)));
+  assert.equal(rankGroups(bad,{quantity:1}).length,0);
+});
 test('the A ordinal never merges alphabetic and numeric rows into one adjacent group',()=>{
   const rows=read([seat('alpha','A',0,0),seat('number','1',0,1)]);
   assert.deepEqual(rows.map(s=>s.row),[1,1]);

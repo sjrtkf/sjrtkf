@@ -17,7 +17,7 @@ function fixture({notice=true,heading='예매 안내',body='N석 응원석 / 테
     if(selector.includes('[role="dialog"]')||selector.includes('[role="alertdialog"]'))return notice&&modal?[container]:[];
     return [];
   }};
-  const context=vm.createContext({window:{},document,location:{origin:'https://tickets.interpark.com',pathname:'/gates/ticket/26005452',href:'https://tickets.interpark.com/gates/ticket/26005452'},performance:{now:()=>0,timeOrigin:1},Date,URL,getComputedStyle:e=>({display:e.hidden?'none':'block',visibility:'visible'}),setTimeout:()=>1,clearTimeout(){},MutationObserver:class{constructor(fn){observer=fn;}observe(){}disconnect(){}}});
+  const context=vm.createContext({siteInvoke:(e,kind,value)=>{if(kind==='change'){e.value=value;e.siteChange?.(value);return;}return e.click();},window:{},document,location:{origin:'https://tickets.interpark.com',pathname:'/gates/ticket/26005452',href:'https://tickets.interpark.com/gates/ticket/26005452'},performance:{now:()=>0,timeOrigin:1},Date,URL,getComputedStyle:e=>({display:e.hidden?'none':'block',visibility:'visible'}),setTimeout:()=>1,clearTimeout(){},MutationObserver:class{constructor(fn){observer=fn;}observe(){}disconnect(){}}});
   const run=(fn,arg)=>vm.runInContext(`(${fn.toString()})(${JSON.stringify(arg)??''})`,context);
   return {run,button,container,title,gateButton,context,clicks:()=>clicks,gateClicks:()=>gateClicks,setNotice:value=>notice=value,notify:()=>observer?.()};
 }
@@ -84,6 +84,21 @@ test('A disabled notice is not clicked or latched and can be accepted after natu
   const f=fixture();f.button.disabled=true;assert.equal(f.run(flow.clickKnown,'확인하고 예매하기').disabled,true);assert.equal(f.clicks(),0);
   f.button.disabled=false;assert.equal(f.run(flow.clickKnown,'확인하고 예매하기').clicked,true);assert.equal(f.clicks(),1);
 });
+
+test('Known non-modal sports grade sheet behind a notice is not an extra confirmation',()=>{
+  for(const blocked of [false,true]){
+    const f=fixture(),query=f.context.document.querySelectorAll;
+    f.context.location.pathname='/onestop/seat';
+    const choice={getBoundingClientRect:()=>({width:100,height:40}),matches:s=>s==='button[class*="SportsSeatGradeList_contentItem__"]'};
+    const sheet={textContent:'관람 구역을 선택해 주세요 W석 5',getBoundingClientRect:()=>({width:100,height:400}),contains:()=>false,
+      getAttribute:k=>k==='role'?'dialog':null,classList:{contains:n=>n==='nds-e-bottom-sheet__container'},
+      querySelectorAll:s=>s==='button'?[choice]:blocked?[choice]:[]};
+    f.context.document.querySelectorAll=s=>s.includes('[role="dialog"]')?[...query(s),sheet]:query(s);
+    if(blocked)assert.throws(()=>f.run(flow.clickKnown,'확인하고 예매하기'),/자동으로 확인하지/);
+    else assert.equal(f.run(flow.clickKnown,'확인하고 예매하기').clicked,true);
+    assert.equal(f.clicks(),blocked?0:1);
+  }
+});
 test('Gate status distinguishes the notice from the underlying booking button and blocks its watcher',()=>{
   const f=fixture({modal:false}),status=f.run(entry.gateStatus);assert.equal(status.notice.present,true);assert.equal(status.notice.enabled,true);assert.equal(status.buttonText,'남은시간 00:01');assert.equal(status.enabled,false);
   f.run(entry.armGate,{goodsCode:'26005452',runId:1});f.gateButton.disabled=false;f.gateButton.textContent='예매하기';f.notify();assert.equal(f.gateClicks(),0);assert.equal(f.clicks(),0);
@@ -96,3 +111,5 @@ test('A late ordinary notice blocks an armed gate without mistaking its button f
 test('Seat scene reports the same exact notice while an unrelated label does not become a notice',()=>{
   const f=fixture();assert.equal(f.run(flow.scene).notice.present,true);f.button.textContent='확인';assert.equal(f.run(flow.scene).notice.present,false);
 });
+
+test('same-title notice can reopen after an observed absence on the same document',()=>{for(const reader of [flow.scene,entry.gateStatus]){const f=fixture();f.run(flow.clickKnown,'확인하고 예매하기');f.setNotice(false);f.run(reader);f.setNotice(true);assert.equal(f.run(flow.clickKnown,'확인하고 예매하기').clicked,true);assert.equal(f.clicks(),2);}});

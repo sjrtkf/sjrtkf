@@ -36,6 +36,31 @@ function fixture({selectDelay = 15, completeDelay = 15, conflictSeat, conflictCo
   return {adapter, info, calls, dispose: () => timers.forEach(clearTimeout)};
 }
 const options = f => ({groups, adapter: f.adapter, preferences, timeoutMs: 180, pollMs: 2, observationGraceMs: 8});
+test('a slowly closing conflict modal waits for disappearance before rollback and next candidate',async()=>{
+  const f=fixture({conflictSeat:'B'});let timer;
+  f.adapter.dismissConflict=async()=>{f.calls.push('dismiss');timer=setTimeout(()=>{f.info.dialog=null;},160);};
+  try{const result=await chooseCandidates({...options(f),pollMs:20,timeoutMs:800});assert.equal(result.completed,true);assert.equal(f.calls.filter(c=>c==='dismiss').length,1);assert.ok(f.calls.includes('select:C'));}
+  finally{clearTimeout(timer);f.dispose();}
+});
+test('a conflict modal that never closes sends no repeated confirmation or next seat',async()=>{
+  const f=fixture({conflictSeat:'B'});f.adapter.dismissConflict=async()=>{f.calls.push('dismiss');};
+  try{await assert.rejects(chooseCandidates(options(f)),/해제를 확인/);assert.equal(f.calls.filter(c=>c==='dismiss').length,1);assert.equal(f.calls.includes('select:C'),false);}
+  finally{f.dispose();}
+});
+test('football raw row labels and block aliases retain exact seat identity',()=>{
+  const {verifyGroup}=require('../src/selection');
+  const seat={id:'S',block:'101',row:10,rowLabel:'10',rowKind:'numeric',number:12,displayRow:'W1구역 10열',floor:''};
+  const info={selected:['S'],selectedGrades:['W석'],selectedNames:['W1구역 10열 12번']};
+  assert.doesNotThrow(()=>verifyGroup(info,{seats:[seat]},{quantity:1,excludeObstructed:true}));
+  for(const name of ['W1구역 110열 12번','W1구역 10열 112번','W2구역 10열 12번'])assert.throws(()=>verifyGroup({...info,selectedNames:[name]},{seats:[seat]},{quantity:1}));
+  for(const block of ['블록','블럭','구역'])assert.doesNotThrow(()=>verifyGroup({...info,selectedNames:[`101${block} 10열 12번`]},{seats:[{...seat,displayRow:undefined}]},{quantity:1}));
+});
+test('empty-seat rejection clears only owned seats and continues to the next candidate',async()=>{
+  const f=fixture(),complete=f.adapter.complete;let rejected=false;f.adapter.complete=async()=>{if(rejected)return complete();rejected=true;f.calls.push('complete');f.info.dialog={kind:'empty-selection',dismissible:true};};
+  f.adapter.dismissEmptySelection=async()=>{f.calls.push('dismiss-empty');f.info.dialog=null;};
+  try{const result=await chooseCandidates(options(f));assert.equal(result.completed,true);assert.deepEqual(f.calls,['select:A','select:B','complete','dismiss-empty','deselect:B','deselect:A','select:C','select:D','complete']);}
+  finally{f.dispose();}
+});
 test('delayed optimistic CSS waits for all acknowledgements before completion and confirms next stage', async () => {
   const f = fixture({selectDelay: 30, completeDelay: 30});
   try {const result = await chooseCandidates(options(f)); assert.equal(result.completed, true); assert.deepEqual(f.calls, ['select:A', 'select:B', 'complete']);} finally {f.dispose();}
@@ -177,7 +202,7 @@ test('a mismatched site letter row never proceeds to completion',async()=>{
   const f=fixture(),snapshot=f.adapter.snapshot;
   f.adapter.snapshot=async()=>{const info=await snapshot();info.selectedNames=info.selectedNames.map(name=>name.replace('1열','B열'));return info;};
   const alphaGroups=[{seats:groups[0].seats.map(s=>({...s,rowKind:'alpha',rowLabel:'A'}))}];
-  try{await assert.rejects(chooseCandidates({...options(f),groups:alphaGroups}),/열·번호가 예상과 다릅니다/);assert.equal(f.calls.includes('complete'),false);assert.deepEqual(f.info.selected,[]);}
+  try{await assert.rejects(chooseCandidates({...options(f),groups:alphaGroups}),/열·번호가 예상과 다릅니다/);assert.equal(f.calls.includes('complete'),false);assert.deepEqual(f.info.selected,['A','B']);}
   finally{f.dispose();}
 });
 test('untrusted row labels cannot override an inconsistent ordinal or row kind',async()=>{

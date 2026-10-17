@@ -20,7 +20,7 @@ function fixture({legacy=false,visible=true,duplicate=false,other=false,source='
   button.textContent='입력완료';button.click=()=>{clicks++;};
   container.querySelectorAll=selector=>selector.startsWith('input')?[input]:selector==='button'||selector.startsWith('.capchaBtns')?[button]:[];
   document={body,activeElement:body,querySelectorAll(selector){if(selector.startsWith('img[alt=')||selector==='#imgCaptcha')return duplicate?[image,Object.assign(new Element('IMG'),image)]:[image];if(selector.includes('ModalCaptchaSlider'))return other?[new Element()]:[];return [];},createElement(tag){assert.equal(tag,'canvas');return {getContext:()=>({drawImage(){if(canvasError)throw Error('tainted');}}),toDataURL:()=>source};}};
-  const context=vm.createContext({window:{},document,location:{href:legacy?'https://ticket.interpark.com/Book/BookSeat.asp?session=private':'https://tickets.interpark.com/onestop/seat'},crypto:{randomUUID:()=> 'manual-fixture-document'},URL,HTMLInputElement:Input,Event:class{constructor(type){this.type=type;this.isTrusted=false;}},getComputedStyle:e=>({display:e.hidden?'none':'block',visibility:'visible',opacity:'1'}),setTimeout(){throw Error('No waiting timers allowed');},MutationObserver:class{constructor(){throw Error('No observers allowed');}}});
+  const context=vm.createContext({siteInvoke:(e,kind,value)=>{if(kind==='change'){e.value=value;e.siteChange?.(value);return;}return e.click();},window:{},document,location:{href:legacy?'https://ticket.interpark.com/Book/BookSeat.asp?session=private':'https://tickets.interpark.com/onestop/seat'},crypto:{randomUUID:()=> 'manual-fixture-document'},URL,HTMLInputElement:Input,Event:class{constructor(type){this.type=type;this.isTrusted=false;}},getComputedStyle:e=>({display:e.hidden?'none':'block',visibility:'visible',opacity:'1'}),setTimeout(){throw Error('No waiting timers allowed');},MutationObserver:class{constructor(){throw Error('No observers allowed');}}});
   const run=(fn,arg)=>vm.runInContext(`(${fn.toString()})(${JSON.stringify(arg)??''})`,context);
   return {context,document,container,outside,get image(){return image;},get input(){return input;},get button(){return button;},run,clicks:()=>clicks,focuses:()=>focuses,setSource(value){image.src=source=value;},replace(kind){if(kind==='button'){button=Object.assign(new Element('BUTTON'),button);}if(kind==='input'){input=Object.assign(new Input(),input);}if(kind==='image'){image=Object.assign(new Element('IMG'),image);}}};
 }
@@ -48,7 +48,7 @@ test('another editable field or existing captcha text prevents even a later repe
 });
 test('human text is delivered once using native input events and one immediate confirmation',async()=>{
   const f=fixture(),s=prepare(f),events=[];f.input.addEventListener('input',e=>events.push(e.type));f.input.addEventListener('change',e=>events.push(e.type));
-  const result=await submit(f,s);assert.equal(result.submitted,true);assert.equal(f.input.value,'ABCDEF');assert.deepEqual(events,['input','change']);assert.equal(f.clicks(),1);
+  const result=await submit(f,s);assert.equal(result.submitted,true);assert.equal(f.input.value,'ABCDEF');assert.deepEqual(events,[]);assert.equal(f.clicks(),1);
   assert.equal((await submit(f,s)).submitted,false);assert.equal(f.clicks(),1);
 });
 test('stale image, replaced DOM controls and absent preparation reject submission',async()=>{
@@ -74,13 +74,13 @@ test('disabled confirmation returns without timers, waiting or later automatic c
 });
 test('a controlled button may enable during the one input-event microtask',async()=>{
   const f=fixture(),s=prepare(f);f.button.disabled=true;
-  f.input.addEventListener('input',()=>{Promise.resolve().then(()=>{f.button.disabled=false;});});
+  f.input.siteChange=()=>{Promise.resolve().then(()=>{f.button.disabled=false;});};
   assert.equal((await submit(f,s)).submitted,true);assert.equal(f.clicks(),1);
 });
 test('changed image, replaced button, manual edit or cancellation during events prevent a click',async()=>{
   for(const reason of ['image','button','manual','cancel']){
     const f=fixture(),s=prepare(f);
-    f.input.addEventListener('change',()=>{if(reason==='image')f.setSource('data:image/png;base64,REVG');if(reason==='button')f.replace('button');if(reason==='manual'){f.input.value='USER';f.input.dispatchEvent({type:'input',isTrusted:true});}if(reason==='cancel')f.run(manual.manualCaptchaCancel);});
+    f.input.siteChange=()=>{if(reason==='image')f.setSource('data:image/png;base64,REVG');if(reason==='button')f.replace('button');if(reason==='manual'){f.input.value='USER';f.input.dispatchEvent({type:'input',isTrusted:true});}if(reason==='cancel')f.run(manual.manualCaptchaCancel);};
     assert.equal((await submit(f,s)).submitted,false,reason);assert.equal(f.clicks(),0,reason);if(reason==='manual')assert.equal(f.input.value,'USER');
   }
 });

@@ -5,7 +5,7 @@ const {metricName,metricText,MAX_PHASES,MAX_OPERATIONS}=require('./run-metrics')
 function safeText(value,limit=500){
   return String(value??'').replace(/(?:https?|chrome-extension):\/\/[^\s<>"']+/gi,'[주소 생략]')
     .replace(/\b(?:authorization|cookie|bearer)\b[^\r\n]*/gi,'[인증 정보 생략]')
-    .replace(/\b(?:token|sessionId|signature|secret)\s*[:=]\s*[^\s,;]+/gi,'[인증 값 생략]')
+    .replace(/\b(?:token|sessionId|signature|secret|secureData|passCode|captcha|securityCode|password)\b["']?\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi,'[인증 값 생략]')
     .replace(/[A-Za-z0-9_+/=-]{40,}/g,'[긴 식별자 생략]').slice(0,limit);
 }
 function nonnegative(value){return Number.isFinite(value)&&value>=0;}
@@ -38,7 +38,7 @@ function safeLastRun(input){
   if(!input||typeof input!=='object'||!Number.isSafeInteger(input.id)||input.id<1||!Number.isFinite(input.durationMs)||input.durationMs<0)return null;
   const result={id:input.id,durationMs:input.durationMs,message:safeText(input.message),stopReason:input.stopReason?safeText(input.stopReason):null,failureDetail:input.failureDetail?safeText(input.failureDetail):null,
     stages:(Array.isArray(input.stages)?input.stages:[]).slice(-80).filter(s=>s&&Number.isFinite(s.elapsedMs)&&s.elapsedMs>=0).map(safeStage),entry:{}};
-  for(const key of ['strategy','trigger','clockOutcome','clockReason'])if(typeof input.entry?.[key]==='string')result.entry[key]=safeText(input.entry[key],250);
+  for(const key of ['strategy','trigger','clockOutcome','clockReason','httpOutcome','httpCode'])if(typeof input.entry?.[key]==='string')result.entry[key]=safeText(input.entry[key],250);
   for(const key of ['offsetMs','requestCount','receivedCount','failedCount','lastRequestDurationMs','clockUncertaintyMs'])if(Number.isFinite(input.entry?.[key]))result.entry[key]=input.entry[key];
   for(const key of ['seatPageObserved','observerLost','preparationConfirmed'])if(typeof input.entry?.[key]==='boolean')result.entry[key]=input.entry[key];
   if(input.retry){result.retry={};for(const key of ['cycle','attempted'])if(Number.isSafeInteger(input.retry[key])&&input.retry[key]>=0)result.retry[key]=input.retry[key];result.retry.lastReason=safeText(input.retry.lastReason,250);}
@@ -46,4 +46,4 @@ function safeLastRun(input){
   const diagnosis=safeDiagnosis(input.diagnosis);if(diagnosis)result.diagnosis=diagnosis;
   return result;
 }
-module.exports={safeLastRun,safeMetrics,safeDiagnosis};
+module.exports={safeLastRun,safeMetrics,safeDiagnosis,safeText};

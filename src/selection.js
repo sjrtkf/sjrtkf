@@ -16,6 +16,7 @@ function inspect(info, floor = 0) {
   const events = (info.network?.results || []).filter(r => r.seq > floor);
   if (events.some(r => r.status === 'uncertain')) throw new SelectionError('좌석 처리 응답을 확인할 수 없어 중지했습니다. 자동 재시도하지 않습니다.');
   if (info.dialog?.kind === 'unknown') throw new SelectionError('확인되지 않은 안내가 열렸습니다. 사이트의 안내를 직접 확인해 주세요.');
+  if (info.dialog?.kind === 'empty-selection') throw new SelectionError('사이트가 선택 좌석 없음으로 응답했습니다.', 'empty-selection');
   const conflicts = events.filter(r => r.status === 'conflict');
   if (conflicts.length || info.dialog?.kind === 'conflict') throw new SelectionError('다른 예매자가 먼저 선택한 좌석입니다.', 'conflict', [...new Set(conflicts.flatMap(r => r.seatIds || []))]);
   return events;
@@ -62,9 +63,23 @@ function verifyGroup(info, group, p) {
       if(typeof s.rowLabel!=='string'||!/^[A-Z]$/.test(s.rowLabel)||s.rowLabel.charCodeAt(0)-64!==s.row)throw new SelectionError('좌석의 문자 열 표기와 순서 정보가 일치하지 않습니다.');
       rowLabel=s.rowLabel;
     }else if((s.rowKind!=null&&s.rowKind!=='numeric')||(s.rowLabel!=null&&s.rowLabel!==rowLabel))throw new SelectionError('좌석의 열 표기와 순서 정보가 일치하지 않습니다.');
-    return `${s.block}블럭${rowLabel}열${s.number}번`;
+    return {rowLabel,number:String(s.number),block:String(s.block),displayRow:s.displayRow,floor:s.floor};
   });
-  if (info.selectedNames?.length !== p.quantity || expected.some(name => !info.selectedNames.some(actual => actual.replace(/\s/g, '').includes(name)))) throw new SelectionError('사이트의 좌석 열·번호가 예상과 다릅니다.');
+  const remaining=[...(info.selectedNames||[])];
+  const clean=s=>String(s||'').normalize('NFKC').replace(/\s/g,'');
+  const matched=expected.every(seat=>{
+    const index=remaining.findIndex(actual=>{
+      const text=clean(actual),m=text.match(/^(.*?)(\d+|[A-Z])열(\d+)번$/);
+      if(!m||m[2]!==seat.rowLabel||Number(m[3])!==Number(seat.number))return false;
+      // The site formats floor + raw rowNo + seatNo. Prefer those observed
+      // fields, then explicit block/area aliases. Never substring-match numbers.
+      if(seat.displayRow&&text===clean(`${seat.floor||''}${seat.displayRow}${seat.number}번`))return true;
+      const prefix=m[1].replace(/(?:블럭|블록|구역)$/,'');
+      return prefix===clean(seat.block);
+    });
+    if(index<0)return false;remaining.splice(index,1);return true;
+  });
+  if (info.selectedNames?.length !== p.quantity || !matched) throw new SelectionError('사이트의 좌석 열·번호가 예상과 다릅니다. 선택은 유지했으니 현재 좌석을 확인해 주세요.', 'verification-mismatch');
 }
 async function completeSelection({adapter, signal, preferences, timeoutMs = 10000, pollMs = 40, onStatus = () => {}}) {
   const initial = await ready(adapter, {signal, timeoutMs, pollMs});
@@ -108,11 +123,19 @@ async function rollback(adapter, owned, options) {
     if (!pending(info) && !info.busy) break;
     await pause(pollMs);
   } while (Date.now() < until);
-  if (pending(info) || info.busy) return false;
+  if (pending(info) || info.busy || (info.selected||[]).some(id=>!owned.has(id))) return false;
   if (info.dialog) {
-    if (info.dialog.kind !== 'conflict' || !info.dialog.dismissible) return false;
-    await adapter.dismissConflict();
-    await pause(pollMs);
+    if (!['conflict','empty-selection'].includes(info.dialog.kind) || !info.dialog.dismissible) return false;
+    const kind=info.dialog.kind;
+    await (kind==='conflict'?adapter.dismissConflict():adapter.dismissEmptySelection());
+    // A click can resolve before the modal animation and React finally-handler.
+    do {
+      await pause(pollMs);
+      info=await adapter.snapshot();
+      if(info.completed)return true;
+      if(info.network?.healthy===false||info.dialog&&info.dialog.kind!==kind)return false;
+      if(!info.dialog&&!pending(info)&&!info.busy)break;
+    } while(Date.now()<until);
   }
   // Let the site's promise finally-handler update its local pending/selection.
   await pause(pollMs);
@@ -163,12 +186,13 @@ async function chooseCandidates({groups, adapter, signal, preferences, onStatus 
       checkAbort(signal);
       if (!preferences.autoComplete) return {completed: false, selected: true, serverConfirmed: confirmed, attempted, message: `${preferences.quantity}매 선택 표시를 확인했습니다.${confirmed ? ' 개별 선택 서버 응답도 확인했습니다.' : ' 최종 좌석 확보는 선택 완료 단계에서 확인해야 합니다.'}`};
       completing = true;
-      return {...await completeSelection({adapter, signal, preferences, timeoutMs, pollMs, onStatus}), attempted};
+      return {...await completeSelection({adapter, signal, preferences, timeoutMs, pollMs, onStatus}), attempted, selectedIds:[...owned]};
     } catch (error) {
       // A confirmed next-stage must never be undone by a late cancellation.
       let after; try { after = await adapter.snapshot(); } catch {}
-      if (after?.completed) return {completed: true, attempted, message: '좌석 선택 완료 · 가격/할인 화면 이동을 확인했습니다.'};
-      if (completing && !['conflict', 'cancelled'].includes(error.code)) {
+      if (after?.completed) return {completed: true, attempted, selectedIds:[...owned], message: '좌석 선택 완료 · 가격/할인 화면 이동을 확인했습니다.'};
+      if(error.code==='verification-mismatch')throw error;
+      if (completing && !['conflict', 'empty-selection', 'cancelled'].includes(error.code)) {
         error.message += ' 선택 목록을 유지했으니 사이트에서 결과를 확인해 주세요.';
         throw error;
       }
@@ -177,15 +201,15 @@ async function chooseCandidates({groups, adapter, signal, preferences, onStatus 
       if (!cleared) { error.message += ' 일부 좌석 해제를 확인하지 못했습니다. 사이트 선택 목록을 확인해 주세요.'; throw error; }
       const latest = await adapter.snapshot();
       if (latest.completed) return {completed: true, attempted, message: '중지 전에 보낸 선택 완료 요청이 처리되어 가격/할인 화면으로 이동했습니다.'};
-      if (error.code !== 'conflict') throw error;
+      if (!['conflict','empty-selection'].includes(error.code)) throw error;
       checkAbort(signal);
       excludedGroups.add(key);
       // Only exclude a particular seat when a parsed server rejection identifies
       // it; a group failure does not imply that all its seats are unavailable.
       for (const id of error.seatIds || []) if (group.seats.some(s => s.id === id)) excludedIds.add(id);
-      onStatus('선점 실패 확인 · 부분 선택을 해제하고 다음 후보로 이동합니다.');
+      onStatus('좌석 선택 거절 확인 · 부분 선택을 해제하고 다음 후보로 이동합니다.');
     }
   }
   return {completed: false, exhausted: true, attempted, message: '준비한 후보를 모두 확인했습니다. 다음 구역 또는 최신 좌석 정보를 확인합니다.'};
 }
-module.exports = {chooseCandidates, completeSelection, SelectionError, keyFor};
+module.exports = {chooseCandidates, completeSelection, SelectionError, keyFor, verifyGroup, rollback};

@@ -9,6 +9,12 @@ const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypt
   const passed=Number(testLog.match(/ℹ pass (\d+)/)?.[1]),failed=Number(testLog.match(/ℹ fail (\d+)/)?.[1]);
   if(!panel.passed||!passed||failed!==0)throw Error('검증 결과가 없거나 실패가 남아 있습니다.');
   const report={version:pkg.version,unitTests:{passed,failed},panel,checkedFiles:0,liveChromeValidated:false,realOpeningValidated:false};
+  const noClick=JSON.parse(fs.readFileSync(path.join(root,'work/no-click-smoke.json'),'utf8'));
+  if(!noClick.passed||!noClick.minimized||noClick.domInputEvents!==0||noClick.captchaVerifications!==2||noClick.destination!=='/payment')throw Error('최소화·클릭 없는 전체 흐름 검증이 필요합니다.');
+  report.noClickFlow=noClick;
+  const connection=JSON.parse(fs.readFileSync(path.join(root,'work/connection-smoke.json'),'utf8'));
+  if(!connection.passed||!connection.separateProcessRestart||!connection.windowsEncryptedStorage||!connection.revocationPassed)throw Error('자동 재연결·암호화 저장 검증이 필요합니다.');
+  report.connection=connection;
   for(const file of ['README.md',...fs.readdirSync(path.join(root,'src')).filter(n=>fs.statSync(path.join(root,'src',n)).isFile()).map(n=>'src/'+n)]){
     if(!extractFile(archive,file).equals(fs.readFileSync(path.join(root,file))))throw Error('패키지 파일 불일치: '+file);report.checkedFiles++;
   }

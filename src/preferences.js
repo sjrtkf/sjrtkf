@@ -1,5 +1,5 @@
 'use strict';
-const defaults=Object.freeze({quantity:2,requireTogether:true,excludeObstructed:true,priority:'front',areas:[],blocks:[],tiers:[],autoComplete:true,autoNotice:true,autoCaptcha:true,manualCaptchaAssist:true});
+const defaults=Object.freeze({quantity:2,requireTogether:true,excludeObstructed:true,priority:'aisle',areas:[],blocks:[],tiers:[],autoComplete:true,autoNotice:true,autoCaptcha:true,manualCaptchaAssist:false,stopAfterCaptcha:false,excludeRestricted:true,selectionMethod:'click'});
 const list=value=>[...new Set((Array.isArray(value)?value:String(value||'').split(/[\n,]/)).map(x=>String(x).trim()).filter(Boolean))];
 function normalizePreferences(input={}) {
   const quantity=Number(input.quantity??defaults.quantity);
@@ -10,19 +10,20 @@ function normalizePreferences(input={}) {
     if(!t||typeof t!=='object')throw new Error('조건 묶음 형식이 올바르지 않습니다.');
     const minRow=row(t.minRow,(i+1)+'순위 시작 열'),maxRow=row(t.maxRow,(i+1)+'순위 마지막 열');
     if(minRow!=null&&maxRow!=null&&minRow>maxRow)throw new Error((i+1)+'순위 시작 열은 마지막 열보다 클 수 없습니다.');
-    return {name:String(t.name||((i+1)+'순위')).trim()||((i+1)+'순위'),areas:list(t.areas),blocks:list(t.blocks),minRow,maxRow,aisle:['any','prefer','required'].includes(t.aisle)?t.aisle:'prefer',priority:t.priority==='aisle'?'aisle':'front'};
+    return {name:String(t.name||((i+1)+'순위')).trim()||((i+1)+'순위'),areas:list(t.areas),blocks:list(t.blocks),minRow,maxRow,aisle:'prefer',priority:'aisle'};
   });
-  return {quantity,areas:list(input.areas),blocks:list(input.blocks),tiers,priority:input.priority==='aisle'?'aisle':'front',requireTogether:input.requireTogether!==false,excludeObstructed:input.excludeObstructed!==false,autoComplete:input.autoComplete!==false,autoNotice:input.autoNotice!==false,autoCaptcha:input.autoCaptcha!==false,manualCaptchaAssist:input.manualCaptchaAssist!==false};
+  return {quantity,areas:list(input.areas),blocks:list(input.blocks),tiers,priority:'aisle',requireTogether:input.requireTogether!==false,excludeObstructed:input.excludeObstructed!==false,autoComplete:input.autoComplete!==false,autoNotice:input.autoNotice!==false,autoCaptcha:true,manualCaptchaAssist:false,stopAfterCaptcha:input.stopAfterCaptcha===true,selectionMethod:input.selectionMethod==='api'?'api':'click',excludeRestricted:input.excludeRestricted!==false};
 }
-const priorityIndex=(value,values)=>{const i=values.indexOf(value);return i<0?Infinity:i;};
+const labelKey=value=>String(value??'').normalize('NFKC').replace(/\s+/g,'').toLowerCase();
+const matchesArea=(value,seat)=>[seat.grade,seat.gradeCode,seat.name,seat.code].some(v=>v!=null&&labelKey(v)===labelKey(value));
+const matchesBlock=(value,seat)=>[seat.block,seat.blockKey].some(v=>v!=null&&labelKey(v)===labelKey(value));
 const effectiveTiers=p=>p.tiers.length?p.tiers:[{name:'기본 조건',areas:p.areas,blocks:p.blocks,minRow:null,maxRow:null,aisle:'prefer',priority:p.priority,legacy:true}];
 const groupKey=seats=>JSON.stringify(seats.map(s=>String(s.id)).sort());
 function gradePlan(grades,input={}) {
   const p=normalizePreferences(input),plan=[];
   for(const [tierIndex,tier] of effectiveTiers(p).entries()){
     const seen=new Set();
-    const eligible=grades.filter(g=>g&&typeof g.name==='string'&&Number(String(g.count??0).replaceAll(',',''))>=p.quantity&&(!p.excludeObstructed||!/시야\s*방해/.test(g.name))&&(!tier.areas.length||tier.areas.includes(g.name)));
-    if(tier.legacy&&tier.areas.length)eligible.sort((a,b)=>priorityIndex(a.name,tier.areas)-priorityIndex(b.name,tier.areas));
+    const eligible=grades.filter(g=>g&&typeof g.name==='string'&&(g.count==null||String(g.count).trim()===''||!Number.isFinite(Number(String(g.count).replaceAll(',','')))||Number(String(g.count).replaceAll(',',''))>=p.quantity)&&(!p.excludeRestricted||!/휠체어|장애인/.test(g.name))&&(!p.excludeObstructed||!/시야\s*방해/.test(g.name))&&(!tier.areas.length||tier.areas.some(v=>matchesArea(v,g))));
     for(const grade of eligible)if(!seen.has(grade.name)){seen.add(grade.name);plan.push({name:grade.name,tierIndex,tierName:tier.name});}
   }
   return plan;
@@ -31,9 +32,9 @@ function rankGroups(seats,input={},options={}) {
   const p=normalizePreferences(input),excludedIds=new Set(options.excludedIds||[]),excludedGroups=new Set(options.excludedGroups||[]),seenKeys=new Set(),result=[];
   for(const [tierIndex,tier] of effectiveTiers(p).entries()){
     if(options.tierIndex!=null&&options.tierIndex!==tierIndex)continue;
-    // A tier's lists are equally allowed ranges. Only legacy lists encode an order.
+    // All listed areas/blocks are equally allowed; only explicit tiers order them.
     const usable=seats.filter(s=>s.available&&!excludedIds.has(s.id)&&Number.isInteger(s.row)&&Number.isInteger(s.number)&&s.grade&&s.block
-      &&(!p.excludeObstructed||s.obstructed===false)&&(!tier.areas.length||tier.areas.includes(s.grade))&&(!tier.blocks.length||tier.blocks.includes(s.block))
+      &&(!p.excludeRestricted||!/휠체어|장애인/.test(s.grade))&&(!p.excludeObstructed||s.obstructed===false)&&(!tier.areas.length||tier.areas.some(v=>matchesArea(v,s)))&&(!tier.blocks.length||tier.blocks.some(v=>matchesBlock(v,s)))
       &&(tier.minRow==null||s.row>=tier.minRow)&&(tier.maxRow==null||s.row<=tier.maxRow));
     const byRow=new Map();
     for(const s of usable){const key=JSON.stringify([s.grade,s.block,s.row,s.rowKind||'numeric',s.segment]);if(!byRow.has(key))byRow.set(key,new Map());byRow.get(key).set(s.id,s);}
@@ -49,9 +50,8 @@ function rankGroups(seats,input={},options={}) {
         add(batch,true);
       }
     }
-    const score=g=>{const first=g.seats[0],row=Math.max(...g.seats.map(s=>s.row)),aisle=g.seats.some(s=>s.aisle===true)?0:g.seats.every(s=>s.aisle===false)?1:2;
-      const within=tier.aisle==='any'?[row]:(tier.priority==='aisle'?[aisle,row]:[row,aisle]);
-      return [...(tier.legacy?[tier.areas.length?priorityIndex(first.grade,tier.areas):0,tier.blocks.length?priorityIndex(first.block,tier.blocks):0]:[]),...within,first.colIdx??first.number];};
+    const score=g=>{const first=g.seats[0],row=Math.max(...g.seats.map(s=>s.row)),distance=Math.min(...g.seats.map(s=>s.aisle===true?0:Number.isInteger(s.aisleDistance)&&s.aisleDistance>=0?s.aisleDistance:Infinity));
+      return [distance,row,first.colIdx??first.number];};
     const compare=(a,b)=>{const x=score(a),y=score(b);for(let i=0;i<x.length;i++)if(x[i]!==y[i])return x[i]-y[i];return a.key.localeCompare(b.key);};
     if(!candidates.length&&!p.requireTogether&&usable.length>=p.quantity){
       const singles=usable.map(s=>({seats:[s],key:groupKey([s])})).sort(compare);
@@ -64,4 +64,4 @@ function rankGroups(seats,input={},options={}) {
   // UI display limits must not truncate the candidate pool used for recovery.
   return result;
 }
-module.exports={defaults,normalizePreferences,rankGroups,gradePlan,groupKey};
+module.exports={defaults,normalizePreferences,rankGroups,gradePlan,groupKey,labelKey,matchesArea,matchesBlock};

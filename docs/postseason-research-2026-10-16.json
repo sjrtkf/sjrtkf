@@ -1,0 +1,1036 @@
+{
+  "schemaVersion": 2,
+  "observedDate": "2026-10-16",
+  "scope": "예매 전 페이지 및 추가로 진입한 실제 좌석 화면. 추가 가격 분석 제외.",
+  "identifiers": {
+    "pageId": "143",
+    "organizationId": "230",
+    "sportsCategoryId": 11,
+    "bizCode": "25104",
+    "relationCode": "14731",
+    "subGenreCode": "07001",
+    "teams": {
+      "KIA": {
+        "id": "57",
+        "teamCode": "PB007"
+      },
+      "LG": {
+        "id": "58",
+        "teamCode": "PB008"
+      }
+    },
+    "venues": {
+      "광주": {
+        "placeCode": "26000514",
+        "contentGroupId": "24",
+        "articleId": "124"
+      },
+      "잠실": {
+        "placeCode": "26001228",
+        "contentGroupId": "25",
+        "articleId": "125"
+      }
+    }
+  },
+  "games": [
+    {
+      "goodsCode": "26014417",
+      "goodsName": "2026 준플레이오프 1차전 KIA vs LG",
+      "placeCode": "26000514",
+      "placeName": "광주기아챔피언스필드",
+      "bookingOpenTime": "2026-10-15T14:00:00",
+      "bookingEndTime": "2026-10-17T15:00:59",
+      "sport": {
+        "playDate": "2026-10-17",
+        "playTime": "14:00",
+        "homeOrganization": {
+          "id": "57",
+          "teamCode": "PB007",
+          "name": "KIA 타이거즈",
+          "logoUrl": "https://ent-ticketimage.interparkcdn.net/display/285dae13829a442c8c280a46ec3d905b.png"
+        },
+        "awayOrganization": {
+          "id": "58",
+          "teamCode": "PB008",
+          "name": "LG 트윈스",
+          "logoUrl": "https://ent-ticketimage.interparkcdn.net/display/2569afd38454408ca9f58a1c6933ab2b.png"
+        }
+      }
+    },
+    {
+      "goodsCode": "26014419",
+      "goodsName": "2026 준플레이오프 2차전 KIA vs LG",
+      "placeCode": "26000514",
+      "placeName": "광주기아챔피언스필드",
+      "bookingOpenTime": "2026-10-15T15:00:00",
+      "bookingEndTime": "2026-10-18T15:00:59",
+      "sport": {
+        "playDate": "2026-10-18",
+        "playTime": "14:00",
+        "homeOrganization": {
+          "id": "57",
+          "teamCode": "PB007",
+          "name": "KIA 타이거즈",
+          "logoUrl": "https://ent-ticketimage.interparkcdn.net/display/285dae13829a442c8c280a46ec3d905b.png"
+        },
+        "awayOrganization": {
+          "id": "58",
+          "teamCode": "PB008",
+          "name": "LG 트윈스",
+          "logoUrl": "https://ent-ticketimage.interparkcdn.net/display/2569afd38454408ca9f58a1c6933ab2b.png"
+        }
+      }
+    },
+    {
+      "goodsCode": "26014421",
+      "goodsName": "2026 준플레이오프 3차전 LG vs KIA",
+      "placeCode": "26001228",
+      "placeName": "잠실야구장",
+      "bookingOpenTime": "2026-10-16T14:00:00",
+      "bookingEndTime": "2026-10-20T19:30:59",
+      "sport": {
+        "playDate": "2026-10-20",
+        "playTime": "18:30",
+        "homeOrganization": {
+          "id": "58",
+          "teamCode": "PB008",
+          "name": "LG 트윈스",
+          "logoUrl": "https://ent-ticketimage.interparkcdn.net/display/2569afd38454408ca9f58a1c6933ab2b.png"
+        },
+        "awayOrganization": {
+          "id": "57",
+          "teamCode": "PB007",
+          "name": "KIA 타이거즈",
+          "logoUrl": "https://ent-ticketimage.interparkcdn.net/display/285dae13829a442c8c280a46ec3d905b.png"
+        }
+      }
+    },
+    {
+      "goodsCode": "26014423",
+      "goodsName": "2026 준플레이오프 4차전 LG vs KIA",
+      "placeCode": "26001228",
+      "placeName": "잠실야구장",
+      "bookingOpenTime": "2026-10-16T15:00:00",
+      "bookingEndTime": "2026-10-21T19:30:59",
+      "sport": {
+        "playDate": "2026-10-21",
+        "playTime": "18:30",
+        "homeOrganization": {
+          "id": "58",
+          "teamCode": "PB008",
+          "name": "LG 트윈스",
+          "logoUrl": "https://ent-ticketimage.interparkcdn.net/display/2569afd38454408ca9f58a1c6933ab2b.png"
+        },
+        "awayOrganization": {
+          "id": "57",
+          "teamCode": "PB007",
+          "name": "KIA 타이거즈",
+          "logoUrl": "https://ent-ticketimage.interparkcdn.net/display/285dae13829a442c8c280a46ec3d905b.png"
+        }
+      }
+    },
+    {
+      "goodsCode": "26014425",
+      "goodsName": "2026 준플레이오프 5차전 KIA vs LG",
+      "placeCode": "26000514",
+      "placeName": "광주기아챔피언스필드",
+      "bookingOpenTime": "2026-10-15T16:00:00",
+      "bookingEndTime": "2026-10-23T19:30:59",
+      "sport": {
+        "playDate": "2026-10-23",
+        "playTime": "18:30",
+        "homeOrganization": {
+          "id": "57",
+          "teamCode": "PB007",
+          "name": "KIA 타이거즈",
+          "logoUrl": "https://ent-ticketimage.interparkcdn.net/display/285dae13829a442c8c280a46ec3d905b.png"
+        },
+        "awayOrganization": {
+          "id": "58",
+          "teamCode": "PB008",
+          "name": "LG 트윈스",
+          "logoUrl": "https://ent-ticketimage.interparkcdn.net/display/2569afd38454408ca9f58a1c6933ab2b.png"
+        }
+      }
+    }
+  ],
+  "samsung": {
+    "presentInPostseason": false,
+    "presentInSportsMain": false,
+    "teamCode": null,
+    "placeCode": null,
+    "note": "스포츠 메인 응답에서 수원삼성(축구, id78, bluewings)은 있으나 삼성 라이온즈가 아님. 현재 NOL 야구 코드의 존재 또는 부재 전체를 단정하지 않고 조사 응답 범위 내 미확인으로 기록."
+  },
+  "glossary": [
+    [
+      "goodsCode 상품번호",
+      "판매 상품을 식별합니다. 이번에는 차전마다 별도 상품번호가 있습니다. 경기 날짜나 팀 이름을 대신하여 요청 대상을 구분합니다."
+    ],
+    [
+      "placeCode 구장번호",
+      "해당 상품에 연결된 장소 식별자입니다. 광주 26000514, 잠실 26001228을 실제 응답에서 확인했습니다. 연도·판매 상품에 관계없이 영구 고정이라고 단정하지 않습니다."
+    ],
+    [
+      "playSeq 회차번호",
+      "상품 안의 공연·경기 회차입니다. 광주 1차전과 잠실 3차전 모두 001이므로 playSeq=001을 준플레이오프 1차전으로 해석하면 안 됩니다. 상품·구장·회차를 함께 사용해야 합니다."
+    ],
+    [
+      "reserved / reservedSeat",
+      "지정석 운영 여부 등의 상품 설정입니다. true라고 해서 내 계정이 좌석을 예약했거나 선점했다는 뜻은 아닙니다. 성공 여부는 선택 응답과 다음 화면에서 확인합니다."
+    ],
+    [
+      "bookWait / bookWaitStatus",
+      "취소표 등을 신청해 두는 예매대기 서비스 관련 설정입니다. 사람이 몰려 순서를 기다리는 접속 대기열과는 별개입니다. 현재 bookWait=false이고 공개 안내에도 예매대기 불가라고 표시되어 있습니다. NOTYET 하나만으로 미래 개방을 예측하지 않습니다."
+    ],
+    [
+      "초기 seats 배열",
+      "처음 HTML을 만들 때 포함한 등급별 자료 목록입니다. 각 항목은 등급 코드·이름·초기 잔여석 등을 가지며, 이번 배열은 개별 의자 전체 목록이 아닙니다. 화면이 갱신되어도 초기 HTML의 값은 그대로 남을 수 있습니다."
+    ],
+    [
+      "SVG",
+      "선을 확대해도 깨지지 않도록 도형과 좌표로 그리는 웹 그림 형식입니다. 이번 지도는 구역 그룹 g 안에 좌석 원 circle과 클릭 영역 rect를 함께 사용했습니다. 도형 개수를 좌석 수로 더하면 중복 계산됩니다."
+    ],
+    [
+      "seatInfoId",
+      "개별 좌석의 서버 식별자입니다. 표시되는 좌석 번호와 같다고 가정하지 않습니다. 잠실 circle ID에서 상품:구장:회차:일련값 형태를 관찰했지만 다른 경기의 좌석 번호를 생성하는 근거로 사용하지 않습니다."
+    ],
+    [
+      "seatGrade / seatGradeName",
+      "등급 코드 / 등급명입니다. 코드 19가 잠실에서는 3루 레드석이지만 광주에서는 다른 등급입니다. 구장 간 코드를 그대로 복사하면 안 됩니다."
+    ],
+    [
+      "blockKey / seatGroupId",
+      "blockKey는 구역 키이며 이번 지도에서 001:103 같은 값을 봤습니다. seatGroupId는 묶음 좌석 식별에 쓰일 수 있어 1석씩 자유롭게 살 수 있는지 별도 판단해야 합니다."
+    ],
+    [
+      "floor / rowNo / seatNo",
+      "층 또는 위치 표기, 열 표기, 좌석 번호를 담는 필드입니다. 이름만으로 실제 모든 상품의 값 형식을 확정할 수는 없습니다."
+    ],
+    [
+      "rowIdx / colIdx / posLeft / posTop",
+      "배치 순서와 화면상 위치에 쓰는 값입니다. 번호가 연속이어도 통로가 끼어 있을 수 있어 연석은 실제 배치·인접 정보를 함께 확인해야 합니다."
+    ],
+    [
+      "isSelectable / isExposable",
+      "각각 선택 가능 여부와 노출 여부 관련 필드입니다. 그림이 보인다고 서버에서 확보 가능한 것은 아닙니다. 실시간 상태와 선택 결과를 추가 확인합니다."
+    ],
+    [
+      "isInterlocking / externalSeatMeta",
+      "외부 좌석 시스템 연동과 그 메타데이터 경로에 관련된 값입니다. 광주·잠실의 관찰한 초기 설정은 isInterlocking=false였습니다. 모든 경기에서 같은 API가 쓰인다는 뜻은 아닙니다."
+    ],
+    [
+      "seatRenderType / miniMapYN",
+      "지도 표현 방식 코드와 미니맵 사용 설정입니다. 잠실은 D2006을 관찰했지만 코드 명세 전체는 미확인입니다. miniMapYN=true만으로 모든 구역을 읽었다고 볼 수 없습니다."
+    ],
+    [
+      "bookingOpenTime",
+      "서버가 상품 데이터로 제공하는 판매 시작 예정 시각입니다. PC 시간을 읽어 만든 일정이 아닙니다. 화면의 오픈 안내 표시 조건은 브라우저의 현재 시각과 비교하므로 PC 시계 오차가 표시 판단에 영향을 줄 수 있습니다. 서버의 실제 입장 허용·대기열 승인·네트워크 도착 시각은 별도로 작동합니다. 원문에는 시간대 접미사가 없고 국내 페이지 맥락에서 한국 시각으로 해석했습니다."
+    ],
+    [
+      "last-seat-modified",
+      "좌석 상태 응답의 변경 시각을 읽는 헤더 이름으로 소스에서 확인했습니다. 이는 현재 PC 시각이나 해당 회원의 좌석 확보 증거와 다릅니다. 실제 값은 이번에 포착하지 못했습니다."
+    ]
+  ],
+  "apis": [
+    [
+      "GET /sports/goods",
+      "경기 목록: 상품·장소·홈/원정·오픈/마감 등",
+      "공개 GET 응답 HTTP 200 직접 확인"
+    ],
+    [
+      "GET /sports/display/organizations/{path}",
+      "postseason 페이지 구성, 위젯·안내 연결",
+      "공개 GET 응답 HTTP 200 직접 확인"
+    ],
+    [
+      "GET /sports/display/main",
+      "스포츠 메인에 노출하는 단체·페이지 목록",
+      "추가 GET HTTP 200, 2026-10-16 20:44:36 KST"
+    ],
+    [
+      "GET /sports/articles",
+      "선택한 안내 그룹의 HTML·이미지 주소",
+      "광주/잠실 공개 GET HTTP 200 직접 확인"
+    ],
+    [
+      "GET /sports/articles/{articleId}, /sports/goods/period",
+      "개별 안내 또는 기간별 상품 관련 경로",
+      "소스 정의 확인, 응답 미수집"
+    ],
+    [
+      "GET /onestop/api/seatMeta",
+      "선택된 구역의 개별 좌석 상세자료",
+      "소스 정의 확인, 이번 실제 응답 미수집"
+    ],
+    [
+      "GET /onestop/api/externalSeatMeta",
+      "외부 연동 좌석의 상세자료",
+      "소스 정의 확인, 실제 사용 여부·응답 미수집"
+    ],
+    [
+      "GET /onestop/api/seatStatus",
+      "현재 좌석 상태와 변경 시각",
+      "소스 정의 확인, 실제 응답 미수집"
+    ],
+    [
+      "GET /onestop/api/externalSeatStatus",
+      "외부 연동 좌석의 현재 상태",
+      "소스 정의 확인, 실제 응답 미수집"
+    ],
+    [
+      "GET /seats/block-data, /seats/grades",
+      "구역 구성 및 등급 관련 자료",
+      "별도 클라이언트 상대 경로의 정의 확인. 호스트·전체 요청 미확인"
+    ],
+    [
+      "GraphQL GetRemainSeats",
+      "등급별 최신 잔여석·등급 이름·안내 등 조회",
+      "공개 소스의 연산 정의 확인. 가격 필드는 이번 분석에서 제외"
+    ],
+    [
+      "GraphQL InitSeat",
+      "좌석 선택 단계 초기화와 매수 제한·연동 설정 조회",
+      "소스의 initSeat 호출 정의 확인"
+    ],
+    [
+      "GraphQL PreselectSeat / BulkPreselectSeats",
+      "개별 또는 복수 좌석의 임시 선택 요청",
+      "정의 및 기존 도우미 응답 분류 코드 확인. 이번 선점 성공 응답 미확인"
+    ],
+    [
+      "GraphQL DeselectSeat / BulkDeselectSeats",
+      "선택한 좌석 해제 요청",
+      "정의 및 기존 도우미 응답 분류 코드 확인"
+    ],
+    [
+      "POST /seats/select, /seats/select-external",
+      "선택 완료 단계 처리",
+      "상대 경로의 소스 정의 확인. 이번 실제 완료 요청 미실행"
+    ],
+    [
+      "/seats/clear-select 계열",
+      "서버 선택 상태를 해제하는 기능",
+      "소스 정의 확인. 조회처럼 보이는 GET이어도 상태 변경 가능"
+    ],
+    [
+      "/captcha/image, /captcha/verify",
+      "보안문자 발급과 사이트 검증",
+      "소스 정의 확인. 실제 인증은 사용자 허용을 받은 화면의 입력·확인 버튼으로 진행"
+    ],
+    [
+      "/seats/book-wait 계열",
+      "예매대기 서비스 관련 좌석 조회",
+      "소스 정의 확인. 현재 상품의 접속 대기열 경로가 아님"
+    ]
+  ],
+  "controls": [
+    [
+      "목록",
+      "예매하기",
+      "경기 카드별 정상 진입. 상품·구장 코드를 gate 경로에 전달하며 이후 로그인·대기열 처리는 서버가 결정",
+      "실제 클릭"
+    ],
+    [
+      "안내",
+      "확인하고 예매하기",
+      "일반 예매 안내를 닫고 다음 화면으로 진행",
+      "광주·잠실 실제 클릭"
+    ],
+    [
+      "보안문자",
+      "소리로 듣기 / 새 문자 불러오기 / 입력칸 / 입력완료",
+      "인증 UI. 이번 잠실 화면의 입력완료로 인증 성공 확인",
+      "입력·확인 실제 실행, 소리/새문자 미실행"
+    ],
+    [
+      "등급",
+      "등급별 이름+잔여석 버튼",
+      "등급 선택. 잔여석이 있을 때 자동 배정/직접 선택 버튼이 나타나는 경우 관찰",
+      "실제 클릭"
+    ],
+    [
+      "등급",
+      "자동 배정받기",
+      "사이트가 좌석을 배정하는 선택지",
+      "버튼 존재 확인, 실행하지 않음"
+    ],
+    [
+      "등급",
+      "직접 좌석 선택하기",
+      "직접 좌석 지도에 진입하는 선택지",
+      "존재 확인. 시도 직전 해당 1석 소진으로 버튼 사라짐"
+    ],
+    [
+      "지도",
+      "좌석 circle 및 투명 rect",
+      "원은 좌석 표시, 투명 사각형은 대응 클릭 영역. 같은 좌석에 두 도형이 있음",
+      "DOM 확인; 현재 선택 가능한 일반 좌석 미확보"
+    ],
+    [
+      "지도",
+      "좌석도 전체보기",
+      "확대/축소 맞춤. 잠실 현재 화면에서는 등급 목록이 실제로 다시 나타남",
+      "실제 클릭 후 등급 31개·circle 0개 확인"
+    ],
+    [
+      "지도",
+      "좌석도 확대 / 좌석도 축소",
+      "지도 확대·축소. 화면 크기에 따라 숨겨짐",
+      "DOM 버튼 정의 확인"
+    ],
+    [
+      "좌석창",
+      "좌석 선택 시간 / 닫기",
+      "남은 시간 설명 및 예매창 닫기",
+      "존재 확인"
+    ],
+    [
+      "좌석창",
+      "등급 별 가격 / 해당 레이어 닫기",
+      "등급 안내 레이어",
+      "존재 기록만, 추가 가격 분석 제외"
+    ],
+    [
+      "PC 헤더",
+      "마이페이지 / 예매확인·취소 / 로고",
+      "계정·기존 예매·메인 이동",
+      "DOM 존재 확인, 현재 좁은 화면에서는 숨겨짐"
+    ],
+    [
+      "선택 후",
+      "선택 완료",
+      "선택 좌석을 확정하고 다음 단계로 이동",
+      "소스/기존 도우미 정의. 이번 실제 활성 화면 미도달"
+    ],
+    [
+      "충돌 안내",
+      "확인",
+      "다른 사용자가 먼저 선택한 좌석 안내를 닫음",
+      "사용자 제시 상황을 처리하도록 코드 보완; 이번 실사이트 충돌 팝업 미재현"
+    ]
+  ],
+  "coverage": {
+    "elements": "DOM·초기 HTML·좌석 SVG·버튼 직접 확인",
+    "sources": "공개 연결 번들과 소스 정의 확인",
+    "network": "공개 GET 응답 확인. Chrome 전체 Network/HAR 및 인증된 좌석 응답 캡처는 연결 기능에 없어 미완료",
+    "console": "이전 수집된 로그 범위만. DevTools 콘솔 전체 기록 아님",
+    "application": "패널 접근 불가, 쿠키·저장소 미검사",
+    "performance": "패널 접근 불가, 측정 미수행",
+    "memory": "패널 접근 불가, 힙 스냅샷 미수행",
+    "securityIssuesLighthouse": "패널 접근 불가, 직접 검사 미수행"
+  },
+  "gwangju": {
+    "goodsCode": "26014425",
+    "placeCode": "26000514",
+    "observation": "5차전 진입 후 일반 등급 모두 0; 휠체어 등급만 잔여석 표시. 제한석은 선택하지 않음.",
+    "initialFromEarlierGame": {
+      "goodsCode": "26014417",
+      "placeCode": "26000514",
+      "playSeq": "001",
+      "date": "2026-10-17",
+      "time": "14:00",
+      "rateName": "전체관람가",
+      "reserved": true,
+      "reservedSeat": true,
+      "isInterlocking": false,
+      "miniMapYN": true,
+      "cancelableDate": "202610170900",
+      "bookingEndDate": "202610171500",
+      "freeCancelType": "UNTIL_MIDNIGHT",
+      "bookWait": false,
+      "bookWaitStatus": "NOTYET",
+      "snapshotNote": "초기 HTML 값과 이후 실제 화면 잔여석 값은 다름. 아래 counts는 초기 HTML의 스냅샷이며 현재 재고가 아님.",
+      "initialSeatGrades": [
+        {
+          "seatGrade": "1",
+          "seatGradeName": "챔피언석",
+          "remainCount": 0,
+          "seatExternalType": 0
+        },
+        {
+          "seatGrade": "2",
+          "seatGradeName": "중앙테이블석(2인)",
+          "remainCount": 0,
+          "seatExternalType": 0
+        },
+        {
+          "seatGrade": "3",
+          "seatGradeName": "중앙테이블석(3인)",
+          "remainCount": 0,
+          "seatExternalType": 0
+        },
+        {
+          "seatGrade": "4",
+          "seatGradeName": "3루 서프라이즈석",
+          "remainCount": 0,
+          "seatExternalType": 0
+        },
+        {
+          "seatGrade": "5",
+          "seatGradeName": "1루 서프라이즈석",
+          "remainCount": 0,
+          "seatExternalType": 0
+        },
+        {
+          "seatGrade": "6",
+          "seatGradeName": "3루 K9석",
+          "remainCount": 0,
+          "seatExternalType": 0
+        },
+        {
+          "seatGrade": "7",
+          "seatGradeName": "1루 K9석",
+          "remainCount": 0,
+          "seatExternalType": 0
+        },
+        {
+          "seatGrade": "8",
+          "seatGradeName": "3루 K8석",
+          "remainCount": 0,
+          "seatExternalType": 0
+        },
+        {
+          "seatGrade": "9",
+          "seatGradeName": "1루 K8석",
+          "remainCount": 0,
+          "seatExternalType": 0
+        },
+        {
+          "seatGrade": "10",
+          "seatGradeName": "3루 K5석",
+          "remainCount": 0,
+          "seatExternalType": 0
+        },
+        {
+          "seatGrade": "11",
+          "seatGradeName": "1루 K5석",
+          "remainCount": 0,
+          "seatExternalType": 0
+        },
+        {
+          "seatGrade": "12",
+          "seatGradeName": "3루 EV석",
+          "remainCount": 0,
+          "seatExternalType": 0
+        },
+        {
+          "seatGrade": "13",
+          "seatGradeName": "1루 EV석",
+          "remainCount": 0,
+          "seatExternalType": 0
+        },
+        {
+          "seatGrade": "14",
+          "seatGradeName": "3루 타이거즈 중증 장애인 가족석(6인)",
+          "remainCount": 0,
+          "seatExternalType": 0
+        },
+        {
+          "seatGrade": "15",
+          "seatGradeName": "3루 타이거즈가족석(4인)",
+          "remainCount": 0,
+          "seatExternalType": 0
+        },
+        {
+          "seatGrade": "16",
+          "seatGradeName": "3루 타이거즈가족석(6인)",
+          "remainCount": 0,
+          "seatExternalType": 0
+        },
+        {
+          "seatGrade": "17",
+          "seatGradeName": "1루 타이거즈가족석(4인)",
+          "remainCount": 0,
+          "seatExternalType": 0
+        },
+        {
+          "seatGrade": "18",
+          "seatGradeName": "1루 타이거즈가족석(6인)",
+          "remainCount": 0,
+          "seatExternalType": 0
+        },
+        {
+          "seatGrade": "19",
+          "seatGradeName": "3루 파티석(4인)",
+          "remainCount": 0,
+          "seatExternalType": 0
+        },
+        {
+          "seatGrade": "20",
+          "seatGradeName": "1루 파티석(4인)",
+          "remainCount": 0,
+          "seatExternalType": 0
+        },
+        {
+          "seatGrade": "21",
+          "seatGradeName": "3루 외야가족석(6인)",
+          "remainCount": 0,
+          "seatExternalType": 0
+        },
+        {
+          "seatGrade": "22",
+          "seatGradeName": "1루 외야가족석(6인)",
+          "remainCount": 0,
+          "seatExternalType": 0
+        },
+        {
+          "seatGrade": "23",
+          "seatGradeName": "1루 5층 테이블석(2인)",
+          "remainCount": 0,
+          "seatExternalType": 0
+        },
+        {
+          "seatGrade": "24",
+          "seatGradeName": "1루 5층 테이블석(3인)",
+          "remainCount": 0,
+          "seatExternalType": 0
+        },
+        {
+          "seatGrade": "25",
+          "seatGradeName": "3루 5층 테이블석(2인)",
+          "remainCount": 0,
+          "seatExternalType": 0
+        },
+        {
+          "seatGrade": "26",
+          "seatGradeName": "3루 5층 테이블석(3인)",
+          "remainCount": 0,
+          "seatExternalType": 0
+        },
+        {
+          "seatGrade": "27",
+          "seatGradeName": "3루 K9,K8 휠체어장애인석",
+          "remainCount": 0,
+          "seatExternalType": 0
+        },
+        {
+          "seatGrade": "28",
+          "seatGradeName": "3루 K5 휠체어장애인석",
+          "remainCount": 1,
+          "seatExternalType": 0
+        },
+        {
+          "seatGrade": "29",
+          "seatGradeName": "1루 K9,K8 휠체어장애인석",
+          "remainCount": 1,
+          "seatExternalType": 0
+        },
+        {
+          "seatGrade": "30",
+          "seatGradeName": "1루 K5 휠체어장애인석",
+          "remainCount": 1,
+          "seatExternalType": 0
+        },
+        {
+          "seatGrade": "38",
+          "seatGradeName": "1루 스카이박스(14인)",
+          "remainCount": 0,
+          "seatExternalType": 0
+        },
+        {
+          "seatGrade": "39",
+          "seatGradeName": "1루 K9_장애인지정석",
+          "remainCount": 0,
+          "seatExternalType": 0
+        },
+        {
+          "seatGrade": "40",
+          "seatGradeName": "3루 K9_장애인지정석",
+          "remainCount": 0,
+          "seatExternalType": 0
+        },
+        {
+          "seatGrade": "41",
+          "seatGradeName": "3루 응원특별석",
+          "remainCount": 0,
+          "seatExternalType": 0
+        }
+      ],
+      "screenObservation": "2026-10-16 조사 당시 화면에서 1루 K5 휠체어장애인석만 1, 나머지 표시 등급은 0. 초기 HTML에는 휠체어 3등급이 각 1로 남아 있어 현재 화면과 불일치. 외야석은 화면 목록에는 0으로 표시되나 추출한 초기 seats 배열에는 없음.",
+      "renderedSvg": {
+        "groups": 37,
+        "rectangles": 5891,
+        "scope": "당시 로드된 지도 일부. 경기장 전체 좌석 수나 잔여석 수가 아님.",
+        "exampleBlockKeys": [
+          "001:003",
+          "001:005",
+          "001:007",
+          "001:102",
+          "001:103",
+          "001:104",
+          "001:105",
+          "001:106",
+          "001:107",
+          "001:108",
+          "001:109",
+          "001:110",
+          "001:111",
+          "001:112",
+          "001:113",
+          "001:301",
+          "001:302",
+          "001:303",
+          "001:304",
+          "001:305",
+          "001:306",
+          "001:307",
+          "001:308",
+          "001:309",
+          "001:310",
+          "001:501",
+          "001:502",
+          "001:503",
+          "001:504",
+          "001:505",
+          "001:506",
+          "001:507",
+          "001:508",
+          "001:509",
+          "001:550",
+          "001:551",
+          "001:552"
+        ],
+        "rectFields": [
+          "x",
+          "y",
+          "width",
+          "height",
+          "transform",
+          "class",
+          "fill",
+          "stroke",
+          "pointer-events"
+        ]
+      },
+      "sourceOnlySeatFields": [
+        "seatInfoId",
+        "seatGrade",
+        "seatGradeName",
+        "salesPrice",
+        "floor",
+        "rowNo",
+        "seatNo",
+        "posLeft",
+        "posTop",
+        "isSelectable",
+        "isExposable",
+        "rowIdx",
+        "colIdx",
+        "seatGroupId"
+      ],
+      "sourceOnlyEndpoints": [
+        "/onestop/api/seatMeta",
+        "/onestop/api/externalSeatMeta",
+        "/onestop/api/seatStatus",
+        "/onestop/api/externalSeatStatus",
+        "/seats/block-data",
+        "/seats/grades"
+      ],
+      "sourceEndpointNote": "호출 정의를 소스에서 확인. 실제 광주/잠실의 모든 응답을 확보한 뜻이 아님. /seats 경로는 별도 클라이언트 base URL과 결합됨."
+    }
+  },
+  "jamsil": {
+    "goodsCode": "26014421",
+    "placeCode": "26001228",
+    "playSeq": "001",
+    "playDate": "20261020",
+    "playTime": "6:30 PM",
+    "reserved": true,
+    "reservedSeat": true,
+    "isInterlocking": false,
+    "seatRenderType": "D2006",
+    "bookWait": false,
+    "bookWaitStatus": "NOTYET",
+    "initialGrades": [
+      {
+        "seatGrade": "1",
+        "seatGradeName": "프리미엄석",
+        "remainCount": 0,
+        "seatExternalType": 0
+      },
+      {
+        "seatGrade": "2",
+        "seatGradeName": "1루 테이블석(2인)",
+        "remainCount": 0,
+        "seatExternalType": 0
+      },
+      {
+        "seatGrade": "3",
+        "seatGradeName": "1루 테이블석(3인)",
+        "remainCount": 0,
+        "seatExternalType": 0
+      },
+      {
+        "seatGrade": "4",
+        "seatGradeName": "1루 테이블석(4인)",
+        "remainCount": 0,
+        "seatExternalType": 0
+      },
+      {
+        "seatGrade": "5",
+        "seatGradeName": "1루 테이블석(5인)",
+        "remainCount": 0,
+        "seatExternalType": 0
+      },
+      {
+        "seatGrade": "6",
+        "seatGradeName": "3루 테이블석(2인)",
+        "remainCount": 0,
+        "seatExternalType": 0
+      },
+      {
+        "seatGrade": "7",
+        "seatGradeName": "3루 테이블석(3인)",
+        "remainCount": 0,
+        "seatExternalType": 0
+      },
+      {
+        "seatGrade": "8",
+        "seatGradeName": "3루 테이블석(4인)",
+        "remainCount": 0,
+        "seatExternalType": 0
+      },
+      {
+        "seatGrade": "9",
+        "seatGradeName": "3루 테이블석(5인)",
+        "remainCount": 0,
+        "seatExternalType": 0
+      },
+      {
+        "seatGrade": "10",
+        "seatGradeName": "1루 미니 테이블석",
+        "remainCount": 0,
+        "seatExternalType": 0
+      },
+      {
+        "seatGrade": "11",
+        "seatGradeName": "3루 미니 테이블석",
+        "remainCount": 0,
+        "seatExternalType": 0
+      },
+      {
+        "seatGrade": "12",
+        "seatGradeName": "1루 익사이팅존",
+        "remainCount": 0,
+        "seatExternalType": 0
+      },
+      {
+        "seatGrade": "13",
+        "seatGradeName": "3루 익사이팅존",
+        "remainCount": 0,
+        "seatExternalType": 0
+      },
+      {
+        "seatGrade": "14",
+        "seatGradeName": "1루 블루석",
+        "remainCount": 0,
+        "seatExternalType": 0
+      },
+      {
+        "seatGrade": "15",
+        "seatGradeName": "3루 블루석",
+        "remainCount": 0,
+        "seatExternalType": 0
+      },
+      {
+        "seatGrade": "16",
+        "seatGradeName": "1루 오렌지석",
+        "remainCount": 0,
+        "seatExternalType": 0
+      },
+      {
+        "seatGrade": "17",
+        "seatGradeName": "3루 오렌지석",
+        "remainCount": 0,
+        "seatExternalType": 0
+      },
+      {
+        "seatGrade": "18",
+        "seatGradeName": "1루 레드석",
+        "remainCount": 0,
+        "seatExternalType": 0
+      },
+      {
+        "seatGrade": "19",
+        "seatGradeName": "3루 레드석",
+        "remainCount": 1,
+        "seatExternalType": 0
+      },
+      {
+        "seatGrade": "20",
+        "seatGradeName": "1루 네이비석",
+        "remainCount": 0,
+        "seatExternalType": 0
+      },
+      {
+        "seatGrade": "21",
+        "seatGradeName": "3루 네이비석",
+        "remainCount": 0,
+        "seatExternalType": 0
+      },
+      {
+        "seatGrade": "22",
+        "seatGradeName": "중앙 네이비석",
+        "remainCount": 0,
+        "seatExternalType": 0
+      },
+      {
+        "seatGrade": "23",
+        "seatGradeName": "1루 그린지정석",
+        "remainCount": 0,
+        "seatExternalType": 0
+      },
+      {
+        "seatGrade": "24",
+        "seatGradeName": "3루 그린지정석",
+        "remainCount": 0,
+        "seatExternalType": 0
+      },
+      {
+        "seatGrade": "25",
+        "seatGradeName": "1루 그린응원석",
+        "remainCount": 0,
+        "seatExternalType": 0
+      },
+      {
+        "seatGrade": "26",
+        "seatGradeName": "1루 블루휠체어장애인석",
+        "remainCount": 0,
+        "seatExternalType": 0
+      },
+      {
+        "seatGrade": "27",
+        "seatGradeName": "3루 블루휠체어장애인석",
+        "remainCount": 0,
+        "seatExternalType": 0
+      },
+      {
+        "seatGrade": "28",
+        "seatGradeName": "1루 레드휠체어장애인석(동반O)",
+        "remainCount": 0,
+        "seatExternalType": 0
+      },
+      {
+        "seatGrade": "29",
+        "seatGradeName": "3루 레드휠체어장애인석(동반O)",
+        "remainCount": 0,
+        "seatExternalType": 0
+      },
+      {
+        "seatGrade": "30",
+        "seatGradeName": "1루 레드휠체어장애인석(동반X)",
+        "remainCount": 1,
+        "seatExternalType": 0
+      },
+      {
+        "seatGrade": "31",
+        "seatGradeName": "3루 레드휠체어장애인석(동반X)",
+        "remainCount": 0,
+        "seatExternalType": 0
+      }
+    ],
+    "observation": "3루 레드석 1 → 보안문자 인증 완료 후 0. 이후 조회에서는 모든 등급 0인 시점도 확인. 실시간 재고 보장 없음.",
+    "svg": {
+      "circles": 6464,
+      "rectangles": 6464,
+      "note": "로드된 지도 범위에서 같은 좌석의 표시 원과 클릭 사각형이 중복 존재. 합산하거나 구장 전체 정원으로 해석하지 않음.",
+      "exampleCircleId": "seat_block_26014421:26001228:001:2",
+      "exampleBlockId": "seat_block_001:001",
+      "rect": {
+        "x": "911.502",
+        "y": "1166.539",
+        "width": "3",
+        "height": "3",
+        "pointerEvents": "all"
+      },
+      "circle": {
+        "cx": "913.002",
+        "cy": "1168.039",
+        "r": "1"
+      }
+    },
+    "zoomFitResult": "버튼 클릭 후 관람 구역 목록 31개 표시, circle.js-seat[id] 0개로 바뀜"
+  },
+  "entryComparison": {
+    "normalPath": "공식 목록의 예매하기 → /gates/partner(bc,gc,pc,cc) → 사이트가 발급한 대기열·입장 절차 → /onestop/seat",
+    "direct": "정확한 정상 진입 URL을 여는 것은 가능한 이동 방식이지만 주소만으로 필요한 세션·대기열·입장 허가가 생기지는 않음. /onestop/seat 주소만으로 새 경기를 지정할 수도 없음. 이번에는 직접 요청 재생이나 제한 우회를 실행하지 않음.",
+    "observedFailure": "잠실 4차전 정상 버튼 진입 중 잘못된 접근 안내 후 목록으로 돌아옴. 원인 미확정. 잠실 3차전 정상 버튼 진입은 성공."
+  },
+  "inference": {
+    "usable": [
+      "구장·상품을 정확히 식별하고 같은 구장의 지도 범례와 실제 등급명을 대조",
+      "기존 예매 앱에서 공통 UI와 API 구조를 재사용할 가능성",
+      "상품·구장·회차를 키로 두고 실제 관측한 좌석을 누적 기록"
+    ],
+    "notSupported": [
+      "광주·잠실 코드의 숫자 규칙으로 삼성 코드 생성",
+      "아직 공지되지 않은 삼성 상품번호·오픈 시각·회차 추정 확정",
+      "정적 안내도의 색이나 도형 개수로 실제 잔여석·개별 seatInfoId·연석 확정",
+      "다른 구장의 등급 코드·좌표·좌석 번호를 삼성에 그대로 적용"
+    ]
+  },
+  "implementation": {
+    "version": "0.9.6",
+    "changes": [
+      "보안문자 확인 후 기록·정지 모드",
+      "현재 좌석 정보 기록 버튼",
+      "externalSeatMeta 관찰 경로 지원 (지원 스키마만 파싱)",
+      "보이는 등급 목록 우선 처리·숨겨진 지도 제외",
+      "선점 충돌 문구 확대 및 기존 다음 후보 처리 유지",
+      "장애인·휠체어 제한석 기본 제외",
+      "기존 v0.9.5 선호 설정 마이그레이션"
+    ],
+    "recordFields": "초기 등급 / 현재 등급 / 현재 버튼 / 좌석 circle 식별자·좌표·상태 / 확보된 상세 메타데이터. 가격과 인증정보 제외.",
+    "liveHelperValidation": false
+  },
+  "liveAttempt": {
+    "quantity": 1,
+    "together": false,
+    "area": "일반 좌석 중 제한 없음",
+    "stopAt": "결제 직전",
+    "seatSelected": false,
+    "seatCompleted": false,
+    "paymentReached": false,
+    "reason": "관찰한 일반 좌석은 인증 처리 중 소진되었고 이후 조회에서 일반 잔여석을 확보하지 못함",
+    "finalState": "10분 좌석 선택 세션 만료. 안내 확인 후 원래 포스트시즌 목록으로 복귀."
+  },
+  "sources": [
+    "https://nol.yanolja.com/ticket/genre/sports/postseason",
+    "https://nol.yanolja.com/ticket/genre/sports/api/bff/sports/goods?page=0&size=10&bizCode=25104&homeTeamCode=&relationCode=14731",
+    "https://nol.yanolja.com/ticket/genre/sports/api/bff/sports/display/organizations/postseason",
+    "https://nol.yanolja.com/ticket/genre/sports/api/bff/sports/articles?widgetContentId=521&type=SEATING_GUIDE&limit=5&contentGroupId=24",
+    "https://nol.yanolja.com/ticket/genre/sports/api/bff/sports/articles?widgetContentId=521&type=SEATING_GUIDE&limit=5&contentGroupId=25",
+    "https://nol.yanolja.com/ticket/genre/sports/api/bff/sports/display/main"
+  ],
+  "corrections": [
+    "이전 보고서의 전체보기는 복귀 버튼으로 취급하면 안 된다는 단정 수정: 잠실에서는 실제 등급 목록 복귀를 확인했다. 다만 모든 구장 동작을 일반화하지 않는다.",
+    "투명 rect와 circle이 동일 좌석에 대응하므로 도형 개수는 별개 좌석 수가 아니다."
+  ],
+  "resourceObservation": {
+    "page": "https://nol.yanolja.com/ticket/genre/sports/postseason",
+    "method": "Chrome pageAssets observed resource inventory; not HAR or complete Network response capture",
+    "counts": {
+      "total": 64,
+      "fonts": 2,
+      "images": 12,
+      "other": 9,
+      "scripts": 37,
+      "stylesheets": 4,
+      "videos": 0,
+      "inlineSvg": 20
+    },
+    "observedGuideFetch": "https://nol.yanolja.com/ticket/genre/sports/api/bff/sports/articles?widgetContentId=521&type=SEATING_GUIDE&contentGroupId=25&limit=5",
+    "resourcePathsWithoutQueries": [
+      "https://o113486.ingest.us.sentry.io/api/4511646936924160/envelope/",
+      "https://nol.yanolja.com/cdn-cgi/rum",
+      "https://fe-display-api.yanolja.com/gnb/v1/bi",
+      "https://smart-discovery-api.yanolja.com/search/v1/home",
+      "https://nol.yanolja.com/nol-api/nol-display/navigation-bar",
+      "https://nol.yanolja.com/ticket/genre/sports/api/auth",
+      "https://nol.yanolja.com/ticket/genre/sports/api/bff/sports/articles",
+      "https://cognito-identity.ap-northeast-2.amazonaws.com/",
+      "https://kinesis.ap-northeast-2.amazonaws.com/"
+    ],
+    "limitation": "자산 목록에서 관찰된 요청 경로이며 본문·상태·인증정보는 수집하지 않음. 경로 존재만으로 좌석 데이터나 용도를 확정하지 않음."
+  }
+}

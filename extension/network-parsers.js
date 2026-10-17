@@ -10,7 +10,10 @@ parseMetadata:function parseMetadata(body){
   // Keep this helper inside the parser: extension/build.js serializes the
   // parser as a standalone function into the static extension bundle.
   function parseRow(value){
-    const text=String(value??''),numeric=text.match(/^(\d+)(?:열)?$/);
+    // Football seatMeta observed 2026-10-16 uses e.g. "W1구역 10열".
+    // Strip only this explicit area prefix; never infer a row from arbitrary text.
+    const raw=String(value??''),qualified=raw.match(/^([A-Z]\d{1,2})구역\s+(\d+|[A-Z])열$/);
+    const text=qualified?qualified[2]:raw,numeric=text.match(/^(\d+)(?:열)?$/);
     if(numeric){const row=Number(numeric[1]);return {row,rowLabel:String(row),rowKind:'numeric'};}
     // Support the observed single uppercase-letter labels only. A is ordinal
     // 1 for filtering; rowIdx/colIdx and neighbors still decide adjacency.
@@ -33,14 +36,16 @@ parseMetadata:function parseMetadata(body){
     for(const rowSeats of byRow.values()){
       rowSeats.sort((a,b)=>a.colIdx-b.colIdx);
       const cols=new Set(rowSeats.map(s=>s.colIdx));
+      const edges=rowSeats.filter(s=>!cols.has(s.colIdx-1)||!cols.has(s.colIdx+1)).map(s=>s.colIdx);
       let segment=0;
       for(let i=0;i<rowSeats.length;i++){
         const s=rowSeats[i];if(i&&s.colIdx>rowSeats[i-1].colIdx+1)segment++;
         const rowInfo=parseRow(s.rowNo),rawNumber=String(s.seatNo??'').match(/^(\d+)(?:번)?$/);
         result.push({id:'seat_block_'+s.seatInfoId,block:block.blockKey.split(':').pop(),blockKey:block.blockKey,gradeCode:String(s.seatGrade??''),grade:typeof s.seatGradeName==='string'?s.seatGradeName:null,
-          ...rowInfo,number:rawNumber?Number(rawNumber[1]):null,rowIdx:s.rowIdx,colIdx:s.colIdx,
+          ...rowInfo,displayRow:typeof s.rowNo==='string'?s.rowNo:rowInfo.rowLabel+'열',floor:typeof s.floor==='string'?s.floor:'',number:rawNumber?Number(rawNumber[1]):null,rowIdx:s.rowIdx,colIdx:s.colIdx,
           segment:`${block.blockKey}:${s.rowIdx}:${segment}`,
           aisle:!cols.has(s.colIdx-1)||!cols.has(s.colIdx+1),
+          aisleDistance:Math.min(...edges.map(col=>Math.abs(col-s.colIdx))),
           neighbors:rowSeats.filter(x=>Math.abs(x.colIdx-s.colIdx)===1).map(x=>'seat_block_'+x.seatInfoId),
           exposable:s.isExposable===true,grouped:s.seatGroupId!=null});
       }
@@ -48,7 +53,7 @@ parseMetadata:function parseMetadata(body){
   }
   return result;
 },
-metadataUrl:function metadataUrl(value){try{const u=new URL(value);return u.origin===ORIGIN&&u.pathname==='/onestop/api/seatMeta';}catch{return false;}},
+metadataUrl:function metadataUrl(value){try{const u=new URL(value);return !u.username&&!u.password&&u.origin===ORIGIN&&['/onestop/api/seatMeta','/onestop/api/externalSeatMeta'].includes(u.pathname);}catch{return false;}},
 },
 seatNetwork:{
 classifyRequest:function classifyRequest(request) {
@@ -90,6 +95,21 @@ isEntryRequest:function isEntryRequest(request){
     const url=new URL(request.url);
     return url.origin===ENTRY_ORIGIN&&url.pathname===ENTRY_PATH&&!url.username&&!url.password;
   }catch{return false;}
+},
+classifyEntryResponse:function classifyEntryResponse(status,body){
+  let data;try{data=typeof body==='string'?JSON.parse(body):body;}catch{return {outcome:'unknown',code:'INVALID_RESPONSE'};}
+  if(!data||typeof data!=='object'||Array.isArray(data))return {outcome:'unknown',code:'INVALID_RESPONSE'};
+  const code=typeof data.error==='string'&&/^[A-Za-z0-9_]{1,80}$/.test(data.error)?data.error:null;
+  if(status===429)return {outcome:'blocked',code:'RATE_LIMITED'};
+  if(status>=200&&status<300&&!data.error){
+    try{const u=new URL(data.redirectUrl);if(u.origin==='https://tickets.interpark.com'&&!u.username&&!u.password&&!u.hash&&!/\/(?:error|fail)(?:\/|$)/i.test(u.pathname)&&!u.searchParams.has('errorCode')&&!u.searchParams.has('error')&&/^\/(?:waiting(?:\/|$)|onestop(?:\/|$))/.test(u.pathname))return {outcome:'redirect-ready',code:'VALID_REDIRECT'};}catch{}
+    return {outcome:'unknown',code:'INVALID_REDIRECT'};
+  }
+  // P40057 is the published onestop PRODUCT_NOT_OPEN code. Only an explicit
+  // rejection carrying that exact code qualifies; never infer it from HTTP 403.
+  // Its occurrence on secure-url has not yet been observed in a live opening.
+  if(status>=400&&status<500&&![401,429].includes(status)&&code==='P40057'&&!data.redirectUrl)return {outcome:'not-open',code};
+  return {outcome:status>=400&&status<500?'blocked':'unknown',code:code||'UNCLASSIFIED_RESPONSE'};
 },
 },
 };})();

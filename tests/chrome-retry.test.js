@@ -15,8 +15,12 @@ function setup(options={}){
   class Target{
     constructor(_bridge,row){this.update(row);}update(row){Object.assign(this,row);}getURL(){return this.url;}getTitle(){return 'fixture';}isDestroyed(){return false;}isDemo(){return false;}
     async invoke(fn,arg){
+      if(fn?.name==='priceState')return {ready:true,quantity:api.runs.current.preferences.quantity};
+      if(fn?.name==='proceedBooking')return {dispatched:true};if(fn?.name==='bookingProgress')return {ready:true};if(fn?.name==='adultPriceStep')return {status:'complete',message:'가격/할인 화면 · 성인 가격 확인'};
+      if(fn?.name==='bookingIdentity')return {goodsCode:'26005452',placeCode:'25001730',playSeq:'001'};
       seen.calls.push({fn:fn?.name||fn,arg});
       if(options.invoke)return options.invoke(fn,arg,{api,seen,clock});
+      if(fn?.name==='readDetails')return {blocks:[],grades:[]};
       if(fn?.name==='scene')return {...scene,...options.scene?.({api,seen,clock})};
       if(fn?.name==='liveRead')return this.readSeats();
       if(fn?.name==='clickKnown'){assert.equal(arg,'좌석도 전체보기');seen.backs++;options.back?.({api,seen,clock});return true;}
@@ -36,8 +40,17 @@ function setup(options={}){
   }};
   const electron={app:{isPackaged:false,getAppPath:()=>path.resolve(__dirname,'..'),setPath(){}},powerSaveBlocker:{start:()=>1,isStarted:()=>true,stop(){}}};
   const context={require:n=>n==='electron'?electron:n==='./chrome-target'?{ChromeTarget:Target}:n==='./browser-bridge'?{BrowserBridge:class{}}:n==='node:fs'?{...fs,readFileSync(){throw Error('fixture no preferences');}}:n==='./run-control'?control:n==='./selection'?select:n==='./timing'&&options.clockForGate?{...load(n),clockForGate:options.clockForGate}:n==='node:perf_hooks'&&options.clockForGate?{performance:{now:()=>100}}:load(n),__dirname:path.dirname(filename),process:{argv:[],pid:0},URL,Date:FakeDate,console,setTimeout,clearTimeout};
+  context.httpFixture=async(_wc,run,{seats,resumePrice})=>{
+    if(resumePrice)return {completed:true,bookingAdvanced:true,message:'HTTP 가격/할인 승인 · 예매하기 다음 화면'};
+    const groups=[{seats}];seen.selections.push(groups);
+    const result=await options.select?.({groups,excludedGroups:run.excludedGroups},{api,seen,clock});
+    return result?.exhausted?{conflict:true}:{completed:true,bookingAdvanced:true,...result};
+  };
   vm.createContext(context);vm.runInContext(source+`
     bridge={getState:()=>({}),request:async()=>({healthy:true,sequence:0,pending:[],results:[]})};
+    // Ranking/retry tests replace the HTTP transaction boundary; http-booking.test
+    // executes its real fetch state machine separately.
+    runHttpBooking=globalThis.httpFixture;
     globalThis.api={autoLoop,trackTabs,runs,scopeVersions,command,scheduleGateClock,current,setClock:value=>clockInfo=value,begin:p=>beginRun(current(),p,'auto')};`,context);
   api=context.api;api.trackTabs([{id:1,url:'https://tickets.interpark.com/onestop/seat',documentId:'one'}]);
   return {api,clock,seen,start(p={}){const run=api.begin(p);run.openAt=clock.now;return run;}};
@@ -45,14 +58,23 @@ function setup(options={}){
 function pair(row=1,grade='A'){
   return [1,2].map(n=>({kind:'seat',id:grade+'-'+row+'-'+n,available:true,grade,block:'118',row,number:n,colIdx:n,segment:grade+'-'+row,obstructed:false,aisle:n===1,neighbors:[grade+'-'+row+'-'+(n===1?2:1)]}));
 }
+test('2 seats together with no area restriction advances past isolated seats to the next grade',async()=>{
+  let inMap=false,currentGrade;const grades=[{name:'A',count:2},{name:'B',count:2}];
+  const t=setup({timeStep:1600,scene:()=>({hasSeats:true,grades:inMap?[]:grades}),
+    rows:()=>inMap?(currentGrade==='A'?[pair(1,'A')[0],pair(2,'A')[0]]:pair(13,'B')):[...pair(1,'background'),...grades.map(g=>({kind:'grade',name:g.name,count:'2',available:true}))],
+    open:row=>{inMap=true;currentGrade=row.name;},back:()=>{inMap=false;}
+  });
+  const result=await t.api.autoLoop(t.start({quantity:2,requireTogether:true,areas:[],blocks:[]}));
+  assert.equal(result.bookingAdvanced,true);assert.deepEqual(t.seen.opened,['A','B']);assert.equal(t.seen.backs,1);assert.equal(t.seen.selections[0][0].seats[0].grade,'B');
+});
 
 test('Chrome auto: candidate 21 is attempted after a fresh map read, without ending at the 20-candidate chunk',async()=>{
   const t=setup({rows:()=>Array.from({length:21},(_,i)=>pair(i+1)).flat(),select:(args,{seen})=>{
-    if(seen.selections.length===1){for(const g of args.groups.slice(0,20))args.excludedGroups.add(keyFor(g));return {exhausted:true,limited:true,attempted:20};}
+    if(seen.selections.length<=20)return {exhausted:true,attempted:1};
     return {completed:true,attempted:1};
   }});
   const run=t.start(),result=await t.api.autoLoop(run);
-  assert.equal(result.completed,true);assert.equal(t.seen.selections.length,2);assert.equal(t.seen.selections[1].length,1);assert.equal(t.seen.selections[1][0].seats[0].row,21);
+  assert.equal(result.completed,true);assert.equal(t.seen.selections.length,21);assert.equal(t.seen.selections[20].length,1);assert.equal(t.seen.selections[20][0].seats[0].row,21);
   assert.equal(t.seen.reads,2);assert.equal(run.retry.attempted,21);assert.equal(t.seen.backs,0);assert.deepEqual(t.seen.pauses,[]);
 });
 test('Chrome auto: a fully exhausted set of grades cycles again and finds a seat that appeared later',async()=>{
@@ -62,7 +84,7 @@ test('Chrome auto: a fully exhausted set of grades cycles again and finds a seat
     open:row=>{inMap=true;currentGrade=row.name;},back:()=>{inMap=false;}
   });
   const run=t.start({areas:['A','B']}),result=await t.api.autoLoop(run);
-  assert.equal(result.completed,true);assert.deepEqual(t.seen.opened,['A','B','A']);assert.equal(t.seen.backs,2);assert.equal(run.retry.cycle,2);assert.equal(t.seen.selections.length,1);assert.ok(t.seen.pauses.includes(500));
+  assert.equal(result.completed,true);assert.deepEqual(t.seen.opened,['A','B','A']);assert.equal(t.seen.backs,2);assert.equal(run.retry.cycle,2);assert.equal(t.seen.selections.length,1);assert.ok(t.seen.pauses.includes(3000));
 });
 test('Chrome auto: explicit conflicts in every grade clear per-round exclusions only after the next round begins',async()=>{
   let inMap=false,currentGrade;const grades=[{name:'A',count:2},{name:'B',count:2}];
@@ -73,8 +95,15 @@ test('Chrome auto: explicit conflicts in every grade clear per-round exclusions 
   assert.equal(result.completed,true);assert.deepEqual(t.seen.opened,['A','B','A']);assert.equal(run.retry.cycle,2);assert.equal(run.retry.attempted,3);
 });
 test('Chrome auto: empty grade counts remain waiting and stop immediately during retry pacing',async()=>{
-  const t=setup({scene:()=>({hasSeats:false,grades:[{name:'A',count:0}]}),pause:({api,ms})=>{if(ms===500)api.runs.cancel();}}),run=t.start();
-  await assert.rejects(t.api.autoLoop(run),/중지/);assert.equal(t.seen.selections.length,0);assert.equal(t.seen.opened.length,0);assert.equal(run.retry.cycle,1);assert.equal(run.retry.nextAt,null);assert.deepEqual(t.seen.pauses,[500]);
+  const t=setup({scene:()=>({hasSeats:false,grades:[{name:'A',count:0}]}),pause:({api,ms})=>{if(ms===3000)api.runs.cancel();}}),run=t.start();
+  await assert.rejects(t.api.autoLoop(run),/중지/);assert.equal(t.seen.selections.length,0);assert.equal(t.seen.opened.length,0);assert.equal(run.retry.cycle,1);assert.equal(run.retry.nextAt,null);assert.deepEqual(t.seen.pauses,[3000]);
+});
+
+test('visible grade list can advance while map nodes remain, without using zoom-fit as an unconditional back button',async()=>{
+  let opened=false;
+  const t=setup({scene:()=>({hasSeats:true,grades:[{name:'A',count:2}]}),rows:()=>opened?pair():[{kind:'grade',name:'A',count:'2',available:true}],open:()=>{opened=true;}});
+  const result=await t.api.autoLoop(t.start({areas:['A']}));
+  assert.equal(result.completed,true);assert.deepEqual(t.seen.opened,['A']);assert.equal(t.seen.backs,0);
 });
 test('Chrome auto: expiry of the old 30-minute limit does not stop a late available seat',async()=>{
   const t=setup({rows:()=>pair()}),run=t.start();t.clock.now+=31*60000;
@@ -82,7 +111,7 @@ test('Chrome auto: expiry of the old 30-minute limit does not stop a late availa
 });
 test('Chrome auto: confirmed price stage prevents any additional read, selection, or cleanup',async()=>{
   const t=setup({scene:()=>({completed:true})}),run=t.start();
-  assert.match((await t.api.autoLoop(run)).message,/가격\/할인/);assert.equal(t.seen.reads,0);assert.equal(t.seen.selections.length,0);assert.equal(t.seen.backs,0);
+  assert.match((await t.api.autoLoop(run)).message,/예매하기|가격\/할인/);assert.equal(t.seen.reads,0);assert.equal(t.seen.selections.length,0);assert.equal(t.seen.backs,0);
 });
 test('Chrome entry-only inspection stops at the seat page before scene reads, notices, CAPTCHA, or any seat action',async()=>{
   const t=setup({invoke:()=>{throw Error('Inspection must not execute a seat-page command');}}),run=t.start();run.inspectionOnly=true;
@@ -247,3 +276,5 @@ test('Selection chunks preserve conflict exclusions across 20 failures and allow
   const first=await chooseCandidates(args);assert.equal(first.limited,true);assert.equal(first.attempted,20);assert.equal(info.selected.length,0);
   const second=await chooseCandidates(args);assert.equal(second.completed,true);assert.equal(second.attempted,1);assert.equal(selected.length,21);assert.equal(new Set(selected).size,21);
 });
+
+test('unmatched area configuration stops with a correction message instead of infinite cycling',async()=>{const t=setup({scene:()=>({hasSeats:false,grades:[{name:'블루존',count:20}]}),rows:()=>[]});await assert.rejects(t.api.autoLoop(t.start({areas:['블루존 오타']})),/현재 경기 목록에 없습니다/);assert.equal(t.seen.opened.length,0);});

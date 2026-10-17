@@ -8,9 +8,9 @@ const {normalizePreferences}=require('./preferences');
 // Exact grade/block labels must come from the specific event's official guide.
 const BUILTINS=Object.freeze([
   {id:'legacy',name:'기존 공통 설정',description:'이전에 저장한 좌석 조건입니다. 구장별 설정과 별도로 보존됩니다.'},
-  {id:'lions-park',name:'대구 삼성 라이온즈파크',description:'최종 목표 구장 · 구역·블록은 해당 경기 공식 안내의 이름으로 입력하세요.'},
-  {id:'champions-field',name:'광주 기아챔피언스필드',description:'광주 경기 준비용 · 구역·블록은 해당 경기 공식 안내의 이름으로 입력하세요.'},
-  {id:'jamsil',name:'잠실야구장',description:'잠실 경기 준비용 · 구역·블록은 해당 경기 공식 안내의 이름으로 입력하세요.'},
+  {id:'lions-park',name:'대구 삼성 라이온즈파크',description:'이 구장에 저장한 개인 조건입니다. 현재 경기의 구역·블록은 아래 이름·코드 읽기로 확인하세요.'},
+  {id:'champions-field',name:'광주 기아챔피언스필드',description:'이 구장에 저장한 개인 조건입니다. 현재 경기의 구역·블록은 아래 이름·코드 읽기로 확인하세요.'},
+  {id:'jamsil',name:'잠실야구장',description:'이 구장에 저장한 개인 조건입니다. 현재 경기의 구역·블록은 아래 이름·코드 읽기로 확인하세요.'},
   {id:'gangwon-fc',name:'강원 FC 경기 테스트',description:'축구 경기 적용 확인용 · 실제 경기장과 구역명은 대상 경기에서 확인하세요.'},
 ]);
 const LIONS_REFERENCE=Object.freeze({

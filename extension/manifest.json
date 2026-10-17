@@ -1,12 +1,62 @@
 {
   "manifest_version": 3,
   "name": "야구 티켓팅 도우미 연결",
-  "version": "0.9.5",
+  "version": "0.9.19",
   "description": "왼쪽 설정 프로그램과 일반 Chrome의 NOL 야구 예매 화면을 연결합니다.",
   "minimum_chrome_version": "120",
-  "permissions": ["tabs", "storage", "scripting", "alarms", "debugger", "webNavigation"],
-  "host_permissions": ["http://127.0.0.1/*", "https://nol.yanolja.com/ticket", "https://nol.yanolja.com/ticket/*", "https://tickets.interpark.com/goods/*", "https://tickets.interpark.com/gates/*", "https://tickets.interpark.com/onestop/*", "https://tickets.interpark.com/waiting/*", "https://ticket.interpark.com/Book/*", "https://ticket.interpark.com/SportsBook/*"],
-  "background": {"service_worker": "background.js"},
-  "action": {"default_popup": "popup.html", "default_title": "야구 티켓팅 도우미 연결"},
-  "content_scripts": [{"matches": ["https://nol.yanolja.com/ticket", "https://nol.yanolja.com/ticket/*", "https://tickets.interpark.com/goods/*", "https://tickets.interpark.com/gates/*", "https://tickets.interpark.com/onestop/*", "https://tickets.interpark.com/waiting/*"], "js": ["actions.js", "content.js"], "run_at": "document_start"}, {"matches": ["https://ticket.interpark.com/Book/*", "https://ticket.interpark.com/SportsBook/*"], "js": ["actions.js", "content.js"], "all_frames": true, "run_at": "document_start"}]
+  "permissions": [
+    "tabs",
+    "storage",
+    "scripting",
+    "alarms",
+    "debugger",
+    "webNavigation"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1/*",
+    "https://nol.yanolja.com/ticket",
+    "https://nol.yanolja.com/ticket/*",
+    "https://tickets.interpark.com/goods/*",
+    "https://tickets.interpark.com/gates/*",
+    "https://tickets.interpark.com/onestop/*",
+    "https://tickets.interpark.com/waiting/*",
+    "https://ticket.interpark.com/Book/*",
+    "https://ticket.interpark.com/SportsBook/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "야구 티켓팅 도우미 연결"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://nol.yanolja.com/ticket",
+        "https://nol.yanolja.com/ticket/*",
+        "https://tickets.interpark.com/goods/*",
+        "https://tickets.interpark.com/gates/*",
+        "https://tickets.interpark.com/onestop/*",
+        "https://tickets.interpark.com/waiting/*"
+      ],
+      "js": [
+        "actions.js",
+        "content.js"
+      ],
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://ticket.interpark.com/Book/*",
+        "https://ticket.interpark.com/SportsBook/*"
+      ],
+      "js": [
+        "actions.js",
+        "content.js"
+      ],
+      "all_frames": true,
+      "run_at": "document_start"
+    }
+  ]
 }

@@ -1,11 +1,12 @@
 'use strict';
-const {app, BrowserWindow, ipcMain, net, powerSaveBlocker, screen, shell, clipboard, Menu, Tray, nativeImage} = require('electron');
+const {openingPlan,readPostseasonOpening}=require('./opening-schedule');
+const {app, BrowserWindow, ipcMain, net, powerSaveBlocker, screen, shell, clipboard, Menu, Tray, nativeImage, safeStorage} = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const {pathToFileURL} = require('node:url');
 const {performance}=require('node:perf_hooks');
 const liveAdapter = require('./live-adapter');
-const {normalizePreferences,rankGroups,gradePlan}=require('./preferences');
+const {normalizePreferences,rankGroups,gradePlan,labelKey}=require('./preferences');
 const {parseOpening,clockSample,bestClock,serverClockSample,clockForGate,SERVER_TIME_URL}=require('./timing');
 const {RunControl,pause}=require('./run-control');
 const {SeatRetry}=require('./seat-retry');
@@ -19,19 +20,31 @@ const entry=require('./entry');
 const desktopSettings=require('./desktop-settings');
 const {createVenueStore}=require('./venue-profiles');
 const {safeLastRun}=require('./run-diagnostics');
+const {createRunLog}=require('./run-log');
+const {createPairingStore}=require('./pairing-store');
+const {installExtension}=require('./extension-install');
+const {siteCodeMessage}=require('./site-code');
+const {resolveGradeNames}=require('./grade-names');
 const {phaseForStatus,observerDiagnosis,diagnosisForRun,buildPreflight,seatExtensionCompatible}=require('./run-inspection');
 
 const metadata=require('./metadata');
 const flow=require('./flow');
+const directApi=require('./direct-seat-api'),publicGame=require('./public-game');
+const seatDetails=require('./seat-details');
+const pricePage=require('./price-page');
+const httpBooking=require('./http-booking');
+const {bookingObservation,inspectionState}=require('./booking-observation');
 const HOME = desktopSettings.POSTSEASON;
 const SHELL = pathToFileURL(path.join(__dirname, 'index.html')).href;
 const smoke=process.argv.includes('--panel-smoke');
 const isEntryPage=value=>{try{const u=new URL(value);return !u.username&&!u.password&&u.origin==='https://nol.yanolja.com'&&/^\/ticket(?:\/|$)/.test(u.pathname);}catch{return false;}};
 const validHome=value=>{try{const u=new URL(String(value));return !u.username&&!u.password&&(isEntryPage(value)||(u.origin==='https://tickets.interpark.com'&&(/^(?:\/gates\/ticket\/\d{8}|\/goods\/\d+)(?:\/|$)/.test(u.pathname))));}catch{return false;}};
 // Desktop settings only. Chrome retains its own login/profile and open tabs.
-const dataRoot = app.isPackaged ? path.join(path.dirname(process.execPath), 'settings') : path.join(app.getAppPath(), 'work', smoke ? `panel-smoke-${process.pid}` : 'desktop-settings');
+const stableRoot=app.isPackaged&&!smoke?path.join(process.env.LOCALAPPDATA||app.getPath('appData'),'BaseballTicketHelper'):null;
+const dataRoot = stableRoot ? path.join(stableRoot,'settings') : path.join(app.getAppPath(), 'work', smoke ? `panel-smoke-${process.pid}` : 'desktop-settings');
+fs.mkdirSync(dataRoot,{recursive:true});
 app.setPath('userData', dataRoot);
-const migrated=app.isPackaged&&!smoke?desktopSettings.migrateSettings({destination:dataRoot,sources:['BaseballTicketHelper-v0.9.4-win32-x64','BaseballTicketHelper-v0.9.3-win32-x64','BaseballTicketHelper-v0.9.2-win32-x64','BaseballTicketHelper-v0.9.1-win32-x64','BaseballTicketHelper-v0.9-win32-x64','BaseballTicketHelper-v0.8-win32-x64','BaseballTicketHelper-v0.7-win32-x64','BaseballTicketHelper-v0.6-win32-x64','BaseballTicketHelper-v0.5-win32-x64'].map(name=>path.join(path.dirname(path.dirname(process.execPath)),name,'settings'))}):[];
+const migrated=app.isPackaged&&!smoke?desktopSettings.migrateSettings({destination:dataRoot,sources:[path.join(path.dirname(process.execPath),'settings'),...['BaseballTicketHelper-v0.9.17-win32-x64','BaseballTicketHelper-v0.9.16-win32-x64','BaseballTicketHelper-v0.9.15-win32-x64','BaseballTicketHelper-v0.9.14-win32-x64','BaseballTicketHelper-v0.9.13-win32-x64','BaseballTicketHelper-v0.9.12-win32-x64','BaseballTicketHelper-v0.9.11-win32-x64','BaseballTicketHelper-v0.9.10-win32-x64','BaseballTicketHelper-v0.9.9-win32-x64','BaseballTicketHelper-v0.9.8-win32-x64','BaseballTicketHelper-v0.9.7-win32-x64','BaseballTicketHelper-v0.9.6-win32-x64','BaseballTicketHelper-v0.9.5-win32-x64','BaseballTicketHelper-v0.9.4-win32-x64','BaseballTicketHelper-v0.9.3-win32-x64','BaseballTicketHelper-v0.9.2-win32-x64','BaseballTicketHelper-v0.9.1-win32-x64','BaseballTicketHelper-v0.9-win32-x64','BaseballTicketHelper-v0.8-win32-x64','BaseballTicketHelper-v0.7-win32-x64','BaseballTicketHelper-v0.6-win32-x64','BaseballTicketHelper-v0.5-win32-x64'].map(name=>path.join(path.dirname(path.dirname(process.execPath)),name,'settings'))]}):[];
 let win, active, closing=false, revision=0, bridge, tray, bridgeReady=false, bridgeError='',saveWindowTimer;
 let pageUrl=HOME, browserStatus={connected:false,message:'Chrome 확장 연결 전'};
 let preferences=normalizePreferences(),clockInfo=null,runner=null,powerId=null;
@@ -43,6 +56,7 @@ const preferencesPath=path.join(dataRoot,'preferences.json');
 const settingsPath=path.join(dataRoot,'settings.json');
 const lastRunPath=path.join(dataRoot,'last-run.json');
 let diagnosticWarning='',preflightResult=null;
+const runLog=createRunLog({directory:path.join(dataRoot,'logs'),version:require('../package.json').version,io:fs,onError:message=>{diagnosticWarning=message;}});
 try{const info=fs.statSync(lastRunPath);if(info.size<=100000)lastRun=safeLastRun(JSON.parse(fs.readFileSync(lastRunPath,'utf8')));}catch{}
 if(lastRun&&!lastRun.diagnosis)lastRun.diagnosis=diagnosisForRun(lastRun,lastRun.message);
 // The renderer deduplicates completion notices by ID. Continue from the restored
@@ -50,7 +64,17 @@ if(lastRun&&!lastRun.diagnosis)lastRun.diagnosis=diagnosisForRun(lastRun,lastRun
 if(lastRun)runs.serial=lastRun.id;
 let desktop=desktopSettings.cleanSettings();
 try{desktop=desktopSettings.cleanSettings(JSON.parse(fs.readFileSync(settingsPath,'utf8')));pageUrl=desktop.pageUrl;}catch{}
-const extensionPath=app.isPackaged?path.join(path.dirname(process.execPath),'chrome-extension'):path.join(app.getAppPath(),'extension');
+const extensionSource=app.isPackaged?path.join(path.dirname(process.execPath),'chrome-extension'):path.join(app.getAppPath(),'extension');
+const extensionPath=stableRoot?path.join(stableRoot,'chrome-extension'):extensionSource;
+let extensionReloadRequested=false;
+async function updateExtension(){
+  if(stableRoot)installExtension({source:extensionSource,destination:extensionPath});
+  if(bridge.getState().connected&&bridge.getState().extensionReloadSupported){
+    extensionReloadRequested=true;try{await bridge.request({action:'extension.reload'});}catch(error){extensionReloadRequested=false;throw error;}
+    return {message:'확장 업데이트 적용 · 자동 재연결을 기다립니다. 예매 탭은 새로고침해 주세요.'};
+  }
+  return {message:'고정 확장 폴더를 준비했습니다. 최초 한 번 이 폴더를 Chrome에 등록하고 연결하세요.'};
+}
 try{preferences=normalizePreferences(JSON.parse(fs.readFileSync(preferencesPath,'utf8')));}catch{}
 const venueStore=createVenueStore({filePath:path.join(dataRoot,'venue-profiles.json'),initialPreferences:preferences});
 preferences=venueStore.getPreferences();
@@ -85,7 +109,7 @@ function captchaAdapter(wc,run){
     if(wc.isDestroyed()||targets.get(wc.id)!==wc||wc.missingSince!=null||wc.documentId!==documentId||wc.getURL()!==url||scopeVersions.get(wc.id)!==version||(run?run.targetId:active)!==wc.id)throw Error('보안문자 처리 중 대상 창이나 문서가 바뀌었습니다. 현재 화면을 확인해 주세요.');
   };
   const invoke=async(action,arg)=>{assertCurrent();const result=await js(wc,action,arg);assertCurrent();return result;};
-  return {assertCurrent,snapshot:()=>invoke('captcha.captchaSnapshot'),submit:arg=>invoke('captcha.captchaSubmit',arg),status:arg=>invoke('captcha.captchaStatus',arg)};
+  return {assertCurrent,snapshot:()=>invoke('captcha.captchaSnapshot'),submit:arg=>invoke('captcha.captchaSubmit',arg),status:arg=>invoke('captcha.captchaStatus',arg),refresh:arg=>invoke('captcha.captchaRefresh',arg)};
 }
 async function processCaptcha(wc,mode,run){
   if(bridge.getState().captchaSupported===false)throw Error('보안문자를 연결하려면 v0.9 폴더의 chrome-extension을 등록하고 새 코드로 연결해 주세요.');
@@ -206,18 +230,34 @@ function onDocument(event){
   if(event.documentId)wc.documentId=event.documentId;
   wc.lastReadyDocument=event.documentId;
   if(wc.isDemo())seedDemo(wc.id);
-  const run=runner;if(!run||run.signal.aborted||run.kind!=='auto'||run.targetId!==wc.id||run.observerTask)return;
+  const run=runner;if(!run||run.signal.aborted||run.kind!=='auto'||run.targetId!==wc.id||run.observerTask||(run.entry.strategy==='clock'&&!run.clockEligible))return;
   const match=wc.getURL().match(/^https:\/\/tickets\.interpark\.com\/gates\/ticket\/(\d{8})(?:[?#]|$)/);
   if(!match||run.goodsCode&&run.goodsCode!==match[1]||run.entry.trigger||run.entry.requestCount)return;
   try{pinGateDocument(run,wc);}catch{return;}
   run.goodsCode=match[1];
-  void runJs(run,wc,entry.armGate,{goodsCode:run.goodsCode,runId:run.id,timeoutMs:Math.max(60000,(run.openAt||Date.now())-Date.now()+30*60000)}).then(status=>rememberGate(run,status)).catch(()=>{});
+  void runJs(run,wc,entry.armGate,{goodsCode:run.goodsCode,runId:run.id,allowInitiallyEnabled:true,httpRetry:run.entry.strategy==='clock'&&run.clockEligible,timeoutMs:Math.max(60000,(run.openAt||Date.now())-Date.now()+30*60000)}).then(status=>rememberGate(run,status)).catch(()=>{});
 }
 function onBrowserEvent(event){
   const wc=targets.get(event.tabId);if(!wc)return;
   if(event.documentId&&wc.documentId&&event.documentId!==wc.documentId)return;
-  if(event.type==='metadata')for(const row of event.rows||[])metaStores.get(wc.id)?.set(row.id,row);
-  else if(event.type==='grades')for(const row of event.rows||[])gradeStores.get(wc.id)?.set(row.code,row.name);
+  if(event.type==='native-dialog'){
+    if(runner?.targetId===wc.id)void stopRun('브라우저 기본 경고·확인창이 열려 중지했습니다. Chrome에서 해당 안내를 확인한 뒤 다시 시작해 주세요.');
+    return;
+  }
+  if(event.type==='network'&&runner?.targetId===wc.id){
+    runner.loggedNetwork??=new Map();const last=runner.loggedNetwork.get(wc.documentId)||0;
+    for(const result of event.snapshot?.results||[])if(result.seq>last)runLog.event('seat-response',{kind:result.kind,result:result.status,count:result.seatIds?.length||0});
+    runner.loggedNetwork.set(wc.documentId,Math.max(last,...(event.snapshot?.results||[]).map(r=>r.seq)));
+  }
+  if(event.type==='metadata'){
+    let changed=false;const store=metaStores.get(wc.id);
+    for(const row of event.rows||[]){const previous=store?.get(row.id);if(JSON.stringify(previous)!==JSON.stringify(row))changed=true;store?.set(row.id,row);}
+    if(changed&&runner?.targetId===wc.id)runner.metadataCooldown?.clear();
+  }
+  else if(event.type==='grades'){
+    try{applyGradeDetails(wc,resolveGradeNames(event.rows||[]),runner?.targetId===wc.id?runner:null);}
+    catch(error){runLog.event('grade-error',{message:error.message});state(error.message);}
+  }
   else if(event.type==='metadata-reset'){
     metaStores.get(wc.id)?.clear();gradeStores.get(wc.id)?.clear();
     if(event.reason==='context'){scopeVersions.set(wc.id,(scopeVersions.get(wc.id)||0)+1);invalidate('경기 또는 회차가 변경되어 좌석 목록을 초기화했습니다.');}
@@ -242,9 +282,10 @@ function onBrowserEvent(event){
       if(e.kind==='finished')run.entry.receivedCount++;
       if(e.kind==='failed')run.entry.failedCount++;
       if(Number.isFinite(e.durationMs))run.entry.lastRequestDurationMs=e.durationMs;
+      if(e.outcome){run.entry.httpOutcome=e.outcome;run.entry.httpCode=e.code;runLog.event('entry-response',{result:e.outcome,message:e.code,status:e.status,durationMs:e.durationMs});}
     }
     state();
-  }else if(['error','metadata-error','observer-error'].includes(event.type))state(event.message||'Chrome 좌석 정보 연결을 확인해 주세요.');
+  }else if(['error','metadata-error','observer-error'].includes(event.type)){runLog.event('browser-error',{kind:event.type,message:event.message});state(event.message||'Chrome 좌석 정보 연결을 확인해 주세요.');}
 }
 function seedDemo(id){const store=metaStores.get(id);if(store)for(const s of metadata.parseMetadata(require('./demo-data')))store.set(s.id,s);}
 async function scan(){
@@ -261,26 +302,28 @@ async function scan(){
 async function seatAction(payload) {
   const ref = seatRefs.get(payload?.key);
   if (!ref || ref.revision !== revision || ref.wcId !== active || current().getURL() !== ref.url || Date.now()-ref.created>30000) throw new Error('좌석 목록이 만료되었습니다. 다시 확인해 주세요.');
+  if(payload.action==='click'&&!current().isDemo())throw Error('실제 좌석 선택은 저장한 조건으로 HTTP 실행해 주세요. 개별 좌석 클릭은 사용하지 않습니다.');
   await current().seatAction(ref.row,payload.action);
   if (payload.action === 'click') { seatRefs.clear(); revision++; }
   await current().focus();
   return {message: payload.action === 'click' ? '좌석에 클릭을 전달했습니다. 사이트의 선택 결과를 확인해 주세요.' : '좌석 위치로 이동했습니다.'};
 }
 function measured(wc,action,task){const run=runs.current;return run?.windowIds.has(wc.id)?run.metrics.measure(action,task):task();}
-const js=(wc,fn,arg)=>{assertAvailable(wc);const name=typeof fn==='string'?fn:fn?.name;const action=name==='scene'?'screen-read':name==='liveRead'?'seat-read':name==='clickKnown'?'screen-action':name==='stopWatchers'?'cleanup':'page-command';return measured(wc,action,()=>wc.invoke(fn,arg));};
+const js=(wc,fn,arg)=>{assertAvailable(wc);const name=typeof fn==='string'?fn:fn?.name;const action=name==='scene'?'screen-read':name==='liveRead'?'seat-read':name==='clickKnown'?'screen-action':name==='stopWatchers'?'cleanup':name==='readDetails'?'seat-details':'page-command';return Promise.resolve(measured(wc,action,()=>wc.invoke(fn,arg))).then(result=>{if(runs.current?.windowIds.has(wc.id)&&['prepareEntry','armGate','liveAction','clickKnown','dismissConflict','dismissEmptySelection','captchaSubmit','captchaRefresh'].includes(name))runLog.event('code-action',{action:name,result:result?.status||result?.phase||'returned'});return result;}).catch(error=>{error.message=siteCodeMessage(error.message);if(runs.current?.windowIds.has(wc.id))runLog.event('command-error',{action:name,message:error.message});throw error;});};
 function savePreferences(input){
   preflightResult=null;
   const normalized=normalizePreferences(input);
   venueStore.saveActive(normalized);preferences=normalized;
   fs.mkdirSync(dataRoot,{recursive:true});fs.writeFileSync(preferencesPath,JSON.stringify(preferences,null,2));return preferences;
 }
-function setRunStatus(run,text){if(runs.current!==run)return;if(run.status!==text){run.status=text;const phase=phaseForStatus(text);run.metrics.stage(phase.code,phase.label);run.timeline.push({stage:text,code:phase.code,elapsedMs:run.metrics.snapshot().elapsedMs});if(run.timeline.length>200)run.timeline.splice(0,run.timeline.length-200);state(text);}}
+function setRunStatus(run,text){if(runs.current!==run)return;if(run.status!==text){run.status=text;const phase=phaseForStatus(text);run.metrics.stage(phase.code,phase.label);const elapsedMs=run.metrics.snapshot().elapsedMs;run.timeline.push({stage:text,code:phase.code,elapsedMs});runLog.event('stage',{stage:phase.code,message:text,elapsedMs});if(run.timeline.length>200)run.timeline.splice(0,run.timeline.length-200);state(text);}}
 function beginRun(wc,input,kind){
   if(runner)throw Error('진행 중인 작업을 중지하고 정리가 끝날 때까지 기다려 주세요.');
   if(captchaStatus.busy||manualCaptcha.pending)throw Error('보안문자 테스트를 마치거나 중지한 뒤 시작해 주세요.');
   captchaService?.resetAuto();
   const p=normalizePreferences(input||preferences);preferences=p;
   const run=runs.begin(wc.id,p,kind);runner=run;powerId=powerSaveBlocker.start('prevent-display-sleep');
+  diagnosticWarning='';runLog.start(run.id);runLog.event('configuration',{kind,preferences:p});
   run.entry={strategy:'site',offsetMs:0,trigger:null,clockOutcome:'not-configured',requestCount:0,receivedCount:0,failedCount:0,seatPageObserved:false};run.entryRequests=new Set();
   run.entryDocuments=new Map([...targets.values()].map(target=>[target.id,{documentId:target.documentId||null}]));run.entryActionsStarted=false;
   run.triedJobs=new Set();run.excludedIds=new Set();run.excludedGroups=new Set();run.retry=new SeatRetry();state('준비 중');return run;
@@ -289,7 +332,8 @@ function finishRun(run,message){
   if(runs.current!==run)return;
   const metrics=run.metrics.snapshot();
   lastRun={id:run.id,durationMs:metrics.elapsedMs,stages:run.timeline.slice(-80),message,stopReason:run.stopReason||null,failureDetail:run.failureDetail||null,entry:{...run.entry},retry:run.retry?.snapshot(),metrics,diagnosis:diagnosisForRun(run,message)};
-  try{fs.mkdirSync(dataRoot,{recursive:true});fs.writeFileSync(lastRunPath,JSON.stringify(safeLastRun(lastRun),null,2));diagnosticWarning='';}
+  runLog.finish(lastRun);
+  try{fs.mkdirSync(dataRoot,{recursive:true});fs.writeFileSync(lastRunPath,JSON.stringify(safeLastRun(lastRun),null,2));if(!runLog.failed)diagnosticWarning='';}
   catch{diagnosticWarning='최근 실행 기록을 파일에 저장하지 못했습니다. 실행 결과는 위에 표시된 내용을 확인해 주세요.';}
   runs.finish(run);runner=null;
   if(powerId!=null&&powerSaveBlocker.isStarted(powerId))powerSaveBlocker.stop(powerId);powerId=null;state(message+(diagnosticWarning?' '+diagnosticWarning:''));
@@ -327,7 +371,11 @@ async function readEntryPage(run,wc,fn,arg){
   try{const value=await runJs(run,wc,fn,arg);return moved()?ENTRY_READ_MOVED:value;}
   catch(error){
     runs.assert(run);
-    if(error?.message!=='페이지가 바뀌어 이전 화면의 동작을 취소했습니다.'||run.kind!=='auto'||run.seatScope)throw error;
+    const message=String(error?.message||'');
+    const missingDocument=message.match(/^No document with id ([A-Fa-f0-9-]+) in tab with id (\d+)\.?$/);
+    const navigationRace=message==='페이지가 바뀌어 이전 화면의 동작을 취소했습니다.'||
+      (missingDocument&&missingDocument[1]===original.documentId&&Number(missingDocument[2])===wc.id);
+    if(!navigationRace||run.kind!=='auto'||run.seatScope)throw error;
     // The command reply can precede the tab/document event. Wait only on this
     // explicit race, without reissuing the read or any booking request.
     const deadline=performance.now()+1500;
@@ -364,9 +412,10 @@ async function scheduleGateClock(run,wc,status){
     run.lastClockRefresh=monoNow;
     run.clockTask=syncClock().catch(()=>{if(runs.current===run){run.entry.clockReason='서버 시각 조회 실패 · 활성화 감지를 유지합니다.';state();}}).finally(()=>{run.clockTask=null;});
   }
+  if(!estimate&&run.openAt+(run.entry.offsetMs||0)+1000<plannedServerNow&&!run.clockTask)throw Error('예약 진입 구간이 지났거나 유효한 서버 시각이 없습니다. 이미 열린 경기에는 활성화 감지 방식을 선택해 주세요.');
   if(!estimate){run.entry.clockReason=run.clockTask?'최근 서버 시각 조회 중 · 활성화 감지를 유지합니다.':'시각 표본이 없거나 만료/대체/오차 초과 · 활성화 감지를 유지합니다.';if(!run.clockTask)run.entry.clockOutcome='fallback';return;}
   const offsetMs=run.entry.offsetMs||0;
-  if(estimate.validForMs<run.openAt+offsetMs-estimate.serverNowMs||run.clockAppliedAnchor===clockInfo.anchorMonoMs)return;
+  if(estimate.validForMs<run.openAt+offsetMs+1000-estimate.serverNowMs||run.clockAppliedAnchor===clockInfo.anchorMonoMs)return;
   const sample=clockInfo,before=performance.now(),scope=scopeVersions.get(wc.id),url=wc.getURL();
   const page=await readEntryPage(run,wc,'pageClock');const after=performance.now();
   if(page===ENTRY_READ_MOVED)return;
@@ -376,7 +425,7 @@ async function scheduleGateClock(run,wc,status){
   const roundTrip=after-before,atPage=clockForGate(sample,{monoNow:(before+after)/2});
   if(!atPage||!Number.isFinite(pageMono)||typeof page.documentId!=='string'||roundTrip>250||atPage.uncertaintyMs+roundTrip/2>501)return;
   const installed=await runJs(run,wc,entry.setGateClock,{runId:run.id,goodsCode:run.goodsCode,documentId:page.documentId,source:'ticket-server',openAt:run.openAt,deadlineMono:pageMono+run.openAt-atPage.serverNowMs+offsetMs,validUntilMono:pageMono+atPage.validForMs-roundTrip/2,uncertaintyMs:atPage.uncertaintyMs+roundTrip/2});
-  if(installed){run.clockAppliedAnchor=sample.anchorMonoMs;run.entry.clockOutcome='armed';run.entry.clockReason='공식 오픈 시각 예약 · 비활성이면 기존 감지를 유지합니다.';}
+  if(installed){run.clockAppliedAnchor=sample.anchorMonoMs;run.entry.clockOutcome='armed';run.entry.clockReason='예약 시각 ±1초 · 30ms 최소 간격 · 명시적 미개방 응답만 재시도합니다.';}
 }
 async function games(){
   const wc=current();if(!isEntryPage(wc.getURL()))throw new Error('Chrome에서 NOL 경기 목록 페이지를 먼저 열어 주세요.');
@@ -391,7 +440,13 @@ async function games(){
   });
   const [rows,pageInfo]=await Promise.all([js(wc,entry.gameCards),pageInfoTask]);
   const message=rows.length?'경기 목록을 읽었습니다. 경기별로 판매 시작 시각의 확인 여부를 표시합니다.':pageInfo?.empty?'현재 페이지에 등록된 예매 경기가 없습니다. 공개된 안내는 아래에서 확인할 수 있습니다.':pageInfo?.cardCount?'경기는 표시되지만 도우미가 경기 정보를 읽지 못했습니다. Chrome에서 직접 확인해 주세요.':'경기 목록을 확인하지 못했습니다. 페이지 로딩과 화면을 확인한 뒤 다시 불러와 주세요.';
-  return {games:rows.map(g=>({...g,openAt:parseOpening(g.schedule)})),pageInfo,compatibilityWarning,message:message+(compatibilityWarning?' '+compatibilityWarning:'')};
+  let publicSchedules=[],scheduleError='';
+  if(rows.length&&!compatibilityWarning){try{const response=await js(wc,publicGame.resolveGame,{keys:rows.map(g=>g.key),includeSchedule:true});if(!Array.isArray(response))throw Error('경기 시각 응답 형식이 다릅니다.');publicSchedules=response;}catch(error){scheduleError='공식 API 조회 실패 · '+error.message;}}
+  return {games:rows.map(g=>{
+    const official=publicSchedules.find(row=>row.key===g.key),cardOpenAt=parseOpening(g.schedule),apiOpenAt=official?.openAt;
+    const conflict=apiOpenAt!=null&&cardOpenAt!=null&&apiOpenAt!==cardOpenAt;
+    return {...g,openAt:conflict?null:apiOpenAt??cardOpenAt,endAt:official?.endAt??null,openingSource:conflict?null:apiOpenAt!=null?'공식 경기 API':cardOpenAt!=null?'경기 카드 공지':null,openingReason:conflict?'카드 공지와 공식 API의 시작 시각이 다릅니다.':apiOpenAt==null&&cardOpenAt==null?(scheduleError||official?.openingReason||'공식 일반 예매 시작 시각을 확인하지 못했습니다.'):null};
+  }),pageInfo,compatibilityWarning,message:message+(compatibilityWarning?' '+compatibilityWarning:'')};
 }
 function selectionAdapter(wc,run){
   const initialUrl=wc.getURL(),scope=scopeVersions.get(wc.id);
@@ -405,7 +460,8 @@ function selectionAdapter(wc,run){
     select:async row=>{assertScope();try{await measured(wc,'seat-select',()=>wc.seatAction(row,'click'));}catch(error){if(error.message.includes('SEAT_UNAVAILABLE:'))throw new selection.SelectionError('선택 전에 사이트에서 좌석이 선택 불가로 변경되었습니다.','conflict',[row.id]);throw error;}},
     deselect:async id=>{assertScope();return js(wc,flow.deselect,id);},
     complete:async()=>{assertScope();return js(wc,flow.clickKnown,'선택 완료');},
-    dismissConflict:async()=>{assertScope();return js(wc,flow.dismissConflict);}
+    dismissConflict:async()=>{assertScope();return js(wc,flow.dismissConflict);},
+    dismissEmptySelection:async()=>{assertScope();return js(wc,flow.dismissEmptySelection);}
   };
 }
 async function candidatesFor(wc,p,options={}){
@@ -416,21 +472,215 @@ async function candidatesFor(wc,p,options={}){
   const groups=await measured(wc,'candidate-rank',()=>rankGroups(rows,p,options));
   return {data,rows,groups};
 }
+function applyGradeDetails(wc,data,run){
+  const store=gradeStores.get(wc.id);if(!store)return;
+  const conflicts=[...(data.gradeConflicts||[])];
+  for(const grade of data.grades||[]){
+    if(store.has(grade.code)&&store.get(grade.code)===null)continue;
+    const previous=store.get(grade.code);
+    if(previous&&labelKey(previous)!==labelKey(grade.name))conflicts.push({code:grade.code,names:[previous,grade.name]});
+    else store.set(grade.code,grade.name);
+  }
+  // A conflicting global mapping stays unresolved for this document/round.
+  // A later single-row response must not silently restore an arbitrary alias.
+  for(const conflict of conflicts)store.set(conflict.code,null);
+  if(run){
+    run.gradeConflicts??=new Map();
+    for(const grade of data.grades||[])if(store.get(grade.code)!=null)run.gradeConflicts.delete(grade.code);
+    for(const conflict of conflicts)run.gradeConflicts.set(conflict.code,conflict);
+    if(conflicts.length||data.duplicateCount)runLog.event('grade-names',{gradeCount:data.grades?.length||0,duplicateCount:data.duplicateCount||0,gradeConflicts:conflicts,conflictCount:conflicts.length});
+  }
+}
+async function recoverSeatDetails(run,wc,rows){
+  if(wc.isDemo())return false;
+  const missing=rows.filter(r=>r.kind==='seat'&&(r.row==null||r.number==null||!r.grade));
+  if(!missing.length)return false;
+  run.detailsReadBlocks??=new Set();
+  const blockKeys=[...new Set(missing.filter(r=>!metaStores.get(wc.id)?.has(r.id)).map(r=>r.group).filter(g=>typeof g==='string'&&g.startsWith('seat_block_')).map(g=>g.slice(11)))].filter(k=>!run.detailsReadBlocks.has(k)).slice(0,2);
+  const includeGrades=!run.detailsReadGrades;
+  if(!blockKeys.length&&!includeGrades)return false;
+  const scope=scopeVersions.get(wc.id),documentId=wc.documentId;
+  const identity=directApi.assertIdentity(run.expectedBooking,await runJs(run,wc,directApi.bookingIdentity));
+  const expected=Object.fromEntries(['goodsCode','placeCode','playSeq'].map(k=>[k,identity[k]]));
+  blockKeys.forEach(k=>run.detailsReadBlocks.add(k));
+  setRunStatus(run,'누락된 좌석 열·번호·등급 정보 조회 · 좌석 선택 요청 없음');
+  const data=await runJs(run,wc,seatDetails.readDetails,{expected,blockKeys,includeGrades,expiresAt:Date.now()+20000});
+  if(wc.documentId!==documentId||scopeVersions.get(wc.id)!==scope)throw Error('좌석 상세 조회 중 경기 또는 문서가 바뀌었습니다.');
+  for(const row of metadata.parseMetadata(data.blocks))metaStores.get(wc.id).set(row.id,row);
+  applyGradeDetails(wc,data,run);
+  runLog.event('seat-details',{blockCount:data.blocks.length,gradeCount:data.grades.length,conflictCount:data.gradeConflicts?.length||0,durationMs:data.timings?.totalMs});
+  for(const [kind,durationMs] of Object.entries(data.timings||{}))runLog.event('seat-detail-timing',{kind,durationMs});
+  if(includeGrades)run.detailsReadGrades=true;
+  run.gradeOpenedAt=Date.now();return true;
+}
 async function selectCandidates(wc,run,groups){
+  if(!wc.isDemo()){
+    let attempted=0;
+    for(const group of groups){
+      runs.assert(run);const key=JSON.stringify(group.seats.map(v=>v.id).sort());if(run.excludedGroups.has(key)||group.seats.some(v=>run.excludedIds.has(v.id)))continue;
+      if(attempted>=20)return {completed:false,exhausted:true,limited:true,attempted};
+      attempted++;run.retry.attempted++;
+      const result=await runHttpBooking(wc,run,{seats:group.seats});
+      if(result.conflict){run.excludedGroups.add(key);continue;}
+      return {...result,attempted};
+    }
+    return {completed:false,exhausted:true,attempted};
+  }
   const result=await selection.chooseCandidates({groups,adapter:selectionAdapter(wc,run),signal:run.signal,preferences:run.preferences,excludedIds:run.excludedIds,excludedGroups:run.excludedGroups,onStatus:text=>setRunStatus(run,text)});
-  run.retry.attempted+=result.attempted||0;return result;
+  run.retry.attempted+=result.attempted||0;if(result.selectedIds)run.priceOwnedIds=result.selectedIds;return result.completed?finishPriceSelection(wc,run,result):result;
+}
+async function runHttpBooking(wc,run,{seats,resumePrice=false,resumeSelected=false}={}){
+  const identity=directApi.assertIdentity(run.expectedBooking,await runJs(run,wc,directApi.bookingIdentity));
+  const expected=Object.fromEntries(['goodsCode','placeCode','playSeq'].map(k=>[k,identity[k]]));
+  const runId=String(run.id)+':'+Date.now()+':'+(run.httpAttempt=(run.httpAttempt||0)+1);
+  const expiresAt=Date.now()+120000;
+  const capability=await runJs(run,wc,httpBooking.httpBookingNavigate,{runId,expected,checkOnly:true,expiresAt:Date.now()+10000});
+  if(capability?.supported!==true)throw Error('사이트의 HTTP 진행·화면 동기화 지원을 확인하지 못했습니다. 좌석 요청 전에 중지했습니다.');
+  let status=await runJs(run,wc,httpBooking.httpBookingAction,{action:'begin',runId,expected,seats,quantity:run.preferences.quantity,resumePrice,resumeSelected,stopAfterSeats:!run.preferences.autoComplete&&!resumeSelected&&!resumePrice,expiresAt});
+  const labels={metadata:'좌석 코드·열·번호 HTTP 대조',prices:'예매가/성인 가격 HTTP 조회',preselect:'좌석 HTTP 선점',confirm:'선택 완료 HTTP 요청',validate:'성인 수량 계산 · 가격 검증 HTTP 요청',release:'선점 충돌 · 확보한 좌석 HTTP 해제',ready:'가격 검증 승인 · 다음 화면 이동 준비'};
+  while(Date.now()<expiresAt){
+    runs.assert(run);
+    if(!status||!['metadata','prices','preselect','confirm','validate','release','ready','selected','released','rejected'].includes(status.stage)||!['pending','conflict','uncertain','blocked'].includes(status.status)||!Number.isInteger(status.requestCount))throw Error('HTTP 진행 상태 응답 형식을 확인하지 못했습니다. 추가 요청 없이 중지합니다.');
+    runLog.event('http-booking',{stage:status.stage,result:status.status,message:[status.code,status.apiCode].filter(Boolean).join(' '),status:status.httpStatus,count:status.requestCount,selectedCount:status.heldCount});
+    if(status.status==='conflict'){setRunStatus(run,'충돌 좌석 HTTP 해제 확인 · 다음 후보');return {completed:false,conflict:true};}
+    if(['uncertain','blocked'].includes(status.status)){
+      const explanation=({ADULT_PRICE_AMBIGUOUS:'예매가/성인 가격을 하나로 확인하지 못했습니다.',PRICE_REQUIRES_CERTIFICATION:'추가 인증이 필요한 가격이어서 자동 제출하지 않았습니다.',HTTP_CONTEXT_CHANGED:'처리 중 경기·세션 또는 선택 내용이 바뀌었습니다.',HTTP_OUTCOME_UNKNOWN:'서버의 처리 결과를 확정하지 못해 중복 요청 없이 멈췄습니다.',HTTP_CONFIRMATION_UNKNOWN:'선택 완료 응답 형식을 확인하지 못했습니다.',HTTP_SESSION_EXPIRED:'예매 세션 또는 좌석 유지 시간이 만료됐습니다.',HTTP_PAGE_BLOCKED:'사이트 안내 또는 로딩이 있어 요청을 중지했습니다.'})[status.code]||'HTTP 진행 조건 또는 응답을 확인하지 못했습니다.';
+      throw Error(explanation+' ['+status.code+'] 자동 로그를 확인해 주세요. 기존 선택은 임의로 재요청하지 않았습니다.');
+    }
+    setRunStatus(run,labels[status.stage]||'HTTP 진행 상태 확인');
+    if(['ready','selected'].includes(status.stage))break;
+    status=await runJs(run,wc,httpBooking.httpBookingAction,{action:'step',runId});
+  }
+  if(status.stage==='selected'){await runJs(run,wc,httpBooking.httpBookingNavigate,{runId,expected,syncOnly:true,expiresAt:Date.now()+10000});return {completed:false,selectedIds:seats.map(v=>v.id),message:run.preferences.quantity+'매 좌석 HTTP 선점과 화면 반영을 확인했습니다. 선택 완료·가격 요청은 보내지 않았습니다.'};}
+  if(status.stage!=='ready')throw Error('HTTP 처리 제한 시간이 지났습니다. 기존 요청을 재전송하지 않았습니다.');
+  runs.assert(run);
+  // Navigation can replace the document before its acknowledgement returns.
+  // Observe the destination even on a lost acknowledgement; never replay it.
+  let navigationError;
+  try{await runJs(run,wc,httpBooking.httpBookingNavigate,{runId,expected,expiresAt:Date.now()+10000});}catch(error){navigationError=error;}
+  const until=Date.now()+15000;
+  while(Date.now()<until){
+    const progress=await js(wc,pricePage.bookingProgress).catch(()=>null);
+    if(progress?.ready)return {completed:true,bookingAdvanced:true,adultPriceSelected:true,httpRequestCount:status.requestCount,message:run.preferences.quantity+'매 좌석·성인 가격 HTTP 승인 및 다음 화면 도착을 확인했습니다. 결제는 진행하지 않았습니다.'};
+    runs.assert(run);if(progress?.blocked)throw Error('HTTP 승인 후 사이트 안내가 표시되었습니다. '+progress.message);
+    if(navigationError&&wc.getURL().includes('/onestop/seat')&&/HTTP_/.test(navigationError.message))throw navigationError;
+    await pause(100,run.signal);
+  }
+  throw Error('HTTP 승인은 확인했지만 다음 화면 도착을 확인하지 못했습니다. 화면 이동이나 요청을 반복하지 않았습니다.');
+}
+async function recoverPriceSelection(wc,run,dialog){
+  if(dialog)await runJs(run,wc,dialog.kind==='conflict'?flow.dismissConflict:flow.dismissEmptySelection);
+  const until=Date.now()+10000;
+  setRunStatus(run,'좌석 거절 안내 확인 · 좌석 화면으로 돌아가 최신 후보 재탐색');
+  while(Date.now()<until){
+    runs.assert(run);
+    directApi.assertIdentity(run.expectedBooking,await runJs(run,wc,directApi.bookingIdentity));
+    const scene=await runJs(run,wc,flow.scene);
+    if(scene.dialog){
+      if(!dialog||scene.dialog.kind!==dialog.kind)throw Error('좌석 복구 중 추가 안내를 확인해 주세요. '+scene.dialog.text);
+      await pause(100,run.signal);continue;
+    }
+    const state=await runJs(run,wc,pricePage.returnToSeats);
+    if(state.returned){
+      const adapter=selectionAdapter(wc,run);
+      const cleared=await selection.rollback(adapter,new Set(run.priceOwnedIds||[]),{timeoutMs:8000,pollMs:40,observationGraceMs:160});
+      runs.assert(run);
+      if(!cleared)throw Error('좌석 복구 후 기존 선택을 확인하지 못했습니다. 현재 선택을 확인해 주세요.');
+      if(run.priceOwnedIds?.length)run.excludedGroups.add(JSON.stringify([...run.priceOwnedIds].sort()));
+      run.priceOwnedIds=[];run.gradeOpenedAt=Date.now();
+      return {completed:false,retrySeats:true,message:'거절된 좌석을 정리하고 다음 후보를 확인합니다.'};
+    }
+    await pause(100,run.signal);
+  }
+  throw Error('좌석 거절 안내 후 좌석 화면으로 돌아가지 못했습니다. 이전 버튼을 중복 실행하지 않았습니다.');
+}
+async function finishPriceSelection(wc,run,result={completed:true}){
+  if(wc.isDemo()||run.signal.aborted)return result;
+  if(!run.preferences.autoComplete)return {...result,message:'이미 가격 화면에 도착해 있습니다. 좌석 선택까지만 실행하는 설정이므로 추가 요청 없이 멈췄습니다.'};
+  return runHttpBooking(wc,run,{resumePrice:true});
+}
+// Retained for historical fixture coverage; production HTTP runs never invoke
+// these legacy DOM price controls or use them as a fallback.
+async function legacyFinishPriceSelection(wc,run,result={completed:true}){
+  const until=Date.now()+10000;
+  setRunStatus(run,'선택 좌석 및 가격 수량 확인 · 예매가/성인 선택');
+  while(Date.now()<until){
+    runs.assert(run);
+    directApi.assertIdentity(run.expectedBooking,await runJs(run,wc,directApi.bookingIdentity));
+    const scene=await runJs(run,wc,flow.scene);
+    const notice=noticeState(scene);
+    if(notice.present){await acknowledgeNotice(run,wc,notice);await pause(100,run.signal);continue;}
+    noticeAbsent(run);
+    if(['empty-selection','conflict'].includes(scene.dialog?.kind)&&scene.dialog.dismissible)return recoverPriceSelection(wc,run,scene.dialog);
+    if(scene.dialog)throw Error('가격 선택 중 사이트 안내가 표시되었습니다. '+scene.dialog.text);
+    const state=await runJs(run,wc,pricePage.priceState);
+    if(state.rejected)return recoverPriceSelection(wc,run);
+    if(state.ready){
+      if(state.quantity!==run.preferences.quantity)throw Error('가격 화면의 좌석 수가 요청한 수량과 다릅니다.');
+      if(scene.busy){await pause(100,run.signal);continue;}
+      const step=await runJs(run,wc,pricePage.adultPriceStep,{quantity:run.preferences.quantity});
+      if(step.status==='manual')return {...result,completed:true,adultPriceSelected:false,message:step.message};
+      if(step.status==='complete')return finishBookingButton(wc,run,{...result,adultPriceSelected:true});
+    }
+    await pause(100,run.signal);
+  }
+  throw Error('좌석 또는 성인 가격 수량의 화면 반영을 확인하지 못했습니다. 현재 선택을 유지합니다.');
+}
+async function finishBookingButton(wc,run,result){
+  const until=Date.now()+15000;let dispatched=false;
+  setRunStatus(run,run.preferences.quantity+'매 예매하기 · 다음 화면 응답 확인');
+  while(Date.now()<until){
+    runs.assert(run);
+    if(!dispatched){
+      directApi.assertIdentity(run.expectedBooking,await runJs(run,wc,directApi.bookingIdentity));
+      const sent=await runJs(run,wc,pricePage.proceedBooking,{quantity:run.preferences.quantity});
+      dispatched=sent.dispatched===true;
+    }
+    const progress=await runJs(run,wc,pricePage.bookingProgress);
+    if(progress.blocked){
+      const scene=await runJs(run,wc,flow.scene);
+      if(['empty-selection','conflict'].includes(scene.dialog?.kind)&&scene.dialog.dismissible)return recoverPriceSelection(wc,run,scene.dialog);
+      throw Error('예매하기 후 사이트 안내가 표시되었습니다. '+progress.message);
+    }
+    if(progress.ready)return {...result,completed:true,bookingAdvanced:true,message:run.preferences.quantity+'매 예매하기 후 다음 화면 도착을 확인했습니다. 결제는 진행하지 않았습니다.'};
+    await pause(100,run.signal);
+  }
+  throw Error('예매하기 후 다음 화면 도착을 확인하지 못했습니다. 중복 요청하지 않았으니 Chrome의 현재 화면을 확인해 주세요.');
+}
+async function readCatalog(){
+  const wc=current();if(!liveAdapter.supportedUrl(wc.getURL()))throw Error('현재 경기의 좌석 화면에서 구역·블록을 읽어 주세요.');
+  await ensureNetwork(wc);
+  const scope=scopeVersions.get(wc.id),documentId=wc.documentId;
+  const expected=directApi.assertIdentity(null,await js(wc,directApi.bookingIdentity));
+  const data=await wc.readSeats();
+  const blockKeys=[...new Set(data.rows.filter(r=>r.kind==='seat'&&!metaStores.get(wc.id)?.has(r.id)).map(r=>r.group).filter(g=>g?.startsWith('seat_block_')).map(g=>g.slice(11)))].slice(0,8);
+  const details={blocks:[],grades:[],gradeConflicts:[]};
+  for(let i=0;i<Math.max(1,blockKeys.length);i+=2){
+    const part=await js(wc,seatDetails.readDetails,{expected,blockKeys:blockKeys.slice(i,i+2),includeGrades:i===0,expiresAt:Date.now()+20000});
+    details.blocks.push(...part.blocks);details.grades.push(...part.grades);details.gradeConflicts.push(...part.gradeConflicts||[]);
+  }
+  if(wc.documentId!==documentId||scopeVersions.get(wc.id)!==scope||current().id!==wc.id)throw Error('목록을 읽는 동안 경기 또는 탭이 바뀌었습니다. 다시 읽어 주세요.');
+  for(const row of metadata.parseMetadata(details.blocks))metaStores.get(wc.id).set(row.id,row);
+  applyGradeDetails(wc,details,null);
+  return require('./seat-catalog').buildCatalog({rows:data.rows,metadata:[...metaStores.get(wc.id).values()],grades:[...gradeStores.get(wc.id)].map(([code,name])=>({code,name})),title:wc.getTitle()});
 }
 async function recommend(){const result=await scan();const groups=rankGroups(result.seats,preferences);return {...result,groups,message:groups.length?`선호 조건에 맞는 ${groups.length}개 조합 · ${preferences.quantity}매`:'현재 표시된 좌석 중 조건을 검증할 수 있는 조합이 없습니다.'};}
 function launch(run,task){
   const stopWatchers=()=>Promise.allSettled([...run.windowIds].map(id=>{const wc=targets.get(id);return wc&&!wc.isDestroyed()&&wc.missingSince==null?js(wc,'stopWatchers'):null;}));
-  run.task=(async()=>{try{const result=await task();if(result?.completed===true)run.outcome='price-confirmed';await stopWatchers();finishRun(run,result?.message||'작업이 끝났습니다.');return result;}catch(error){run.failureDetail=error.message;await stopWatchers();finishRun(run,run.stopReason||(run.signal.aborted?'중지했습니다. ':'')+error.message);throw error;}})();
+  run.task=(async()=>{try{const result=await task();if(result?.completed===true)run.outcome=result.bookingAdvanced?'booking-advanced':'price-confirmed';await stopWatchers();finishRun(run,result?.message||'작업이 끝났습니다.');return result;}catch(error){run.failureDetail=error.message;await stopWatchers();finishRun(run,run.stopReason||(run.signal.aborted?'중지했습니다. ':'')+error.message);throw error;}})();
   run.task.catch(()=>{});return run.task;
 }
 async function startRun(payload){
   const extensionVersion=bridge.getState().extensionVersion;
-  if(!payload?.inspectionOnly&&extensionVersion!==undefined&&!seatExtensionCompatible(extensionVersion))throw Error('좌석 진행 개선에는 v0.9.4 이상 Chrome 확장이 필요합니다. 새 배포 폴더의 chrome-extension을 등록하고 다시 연결해 주세요.');
+  if(!payload?.inspectionOnly&&extensionVersion!==undefined&&!seatExtensionCompatible(extensionVersion))throw Error('좌석 진행 개선에는 v0.9.18 이상 Chrome 확장이 필요합니다. 새 배포 폴더의 chrome-extension을 등록하고 다시 연결해 주세요.');
   if(bridge.getState().bookingNoticeSupported===false)throw Error('예매 안내를 처리하려면 v0.9 폴더의 chrome-extension을 등록하고 새 코드로 다시 연결해 주세요.');
+  if(payload?.entryStrategy==='clock'&&extensionVersion!==undefined){const v=String(extensionVersion).split('.').map(Number);if(v.length!==3||v.some(n=>!Number.isInteger(n))||v[0]===0&&(v[1]<9||v[1]===9&&v[2]<19))throw Error('조건부 HTTP 진입에는 v0.9.19 이상 확장이 필요합니다. 도우미의 확장 업데이트를 실행해 주세요.');}
   const requestedPreferences=normalizePreferences(payload?.preferences||preferences);
+  if(extensionVersion!==undefined&&!/^0\.9\.(?:[7-9]|[1-9]\d+)$/.test(String(extensionVersion)))throw Error('경기 식별 검증에는 v0.9.7 Chrome 확장이 필요합니다.');
+  if(requestedPreferences.stopAfterCaptcha&&extensionVersion!==undefined){
+    const v=String(extensionVersion).split('.').map(Number);
+    if(v.length!==3||v.some(n=>!Number.isInteger(n))||!(v[0]>0||v[0]===0&&(v[1]>9||v[1]===9&&v[2]>=6)))throw Error('보안문자 후 기록 모드에는 v0.9.6 이상 Chrome 확장이 필요합니다.');
+  }
   if(!requestedPreferences.manualCaptchaAssist&&requestedPreferences.autoCaptcha!==false&&!payload?.inspectionOnly&&bridge.getState().captchaSupported===false)throw Error('보안문자 자동 인식에는 v0.9 Chrome 확장이 필요합니다. 새 확장을 연결해 주세요.');
   const wc=current(),isGate=/^https:\/\/tickets\.interpark\.com\/gates\/ticket\/\d+(?:[/?#]|$)/.test(wc.getURL()),isSeat=liveAdapter.supportedUrl(wc.getURL())||wc.isDemo();
   if(!isEntryPage(wc.getURL())&&!isGate&&!isSeat)throw Error('경기 목록 또는 해당 경기의 예매 준비·좌석 화면에서 시작해 주세요.');
@@ -449,20 +699,31 @@ async function startRun(payload){
     else if(isGate){
       run.entryActionsStarted=true;const gateUrl=wc.getURL(),gate=await readEntryPage(run,wc,entry.gateStatus,{});
       if(gate!==ENTRY_READ_MOVED&&run.targetId===wc.id&&wc.missingSince==null&&wc.getURL()===gateUrl){if(!gate.supported)throw Error('예매 준비 화면을 확인하지 못했습니다.');run.goodsCode=gate.goodsCode;}
-      run.openAt=Date.now();
+      let official=null;
+      if(payload.openAt==null){try{official=await readPostseasonOpening(run.goodsCode,(url,options)=>net.fetch(url,options));}catch(error){runLog.event('opening-time',{message:error.message});}}
+      runs.assert(run);
+      Object.assign(run,openingPlan({requested:payload.openAt,official:official?.openAt,strategy:run.entry.strategy}));
+      if(official?.placeCode)run.expectedBooking={goodsCode:run.goodsCode,placeCode:official.placeCode};
+      runLog.event('opening-time',{message:'준비 화면 예약 '+new Date(run.openAt).toISOString(),kind:payload.openAt!=null?'사용자 지정':'공식 경기 API'});
     }
     else{
       const all=await runJs(run,wc,entry.gameCards);const game=all.find(g=>g.key===payload?.key);if(!game)throw Error('대상 경기를 먼저 선택해 주세요.');
-      run.game=game;run.openAt=payload.openAt==null?(parseOpening(game.schedule)??Date.now()):Number(payload.openAt);
+      const official=await runJs(run,wc,publicGame.resolveGame,{key:game.key,includeSchedule:true});
+      run.expectedBooking=Object.fromEntries(['goodsCode','placeCode','playDate','playTime'].filter(k=>official[k]!=null).map(k=>[k,official[k]]));run.goodsCode=run.expectedBooking.goodsCode;
+      const officialOpenAt=official.openAt??parseOpening(game.schedule);
+      run.game=game;run.openAt=payload.openAt==null?(officialOpenAt??Date.now()):Number(payload.openAt);
+      runLog.event("opening-time",{message:officialOpenAt==null?"공식 시각 미확인":"공식 시작 "+new Date(officialOpenAt).toISOString(),kind:official.openingSource||"card"});
       if(!Number.isFinite(run.openAt)||run.openAt>Date.now()+15*86400000)throw Error('15일 이내의 오픈 시각을 입력해 주세요.');
-      const officialOpenAt=parseOpening(game.schedule);run.clockEligible=run.entry.strategy==='clock'&&officialOpenAt!=null&&run.openAt===officialOpenAt;
+      run.clockEligible=run.entry.strategy==='clock'&&Number.isFinite(run.openAt)&&(officialOpenAt!=null||payload.openAt!=null);
       run.entryActionsStarted=true;
+      // Seat API mode does not replace the site's SSO/entry flow. A live test
+      // of the copied preparation URL was rejected as an invalid access.
       const prepared=await runJs(run,wc,entry.prepareEntry,{key:game.key,runId:run.id});
-      if(prepared?.phase!=='clicked'||prepared.runId!==run.id)throw Error('준비 화면 진입 클릭의 처리 결과를 확인하지 못했습니다. 중복 실행하지 않고 중지합니다.');
+      if(prepared?.phase!=='clicked'||prepared.runId!==run.id)throw Error('준비 화면 진입 함수의 처리 결과를 확인하지 못했습니다. 중복 실행하지 않고 중지합니다.');
       run.entry.preparationConfirmed=true;
       setRunStatus(run,'예매 준비 화면 진입 · 사이트 개방 대기');
     }
-    if(run.entry.strategy==='clock'&&!run.clockEligible){run.entry.clockOutcome='fallback';run.entry.clockReason='이 경기의 공식 오픈 시각을 확인하지 못했거나 입력값이 다릅니다. 활성화 감지만 사용합니다.';}
+    if(run.entry.strategy==='clock'&&!run.clockEligible){run.entry.clockOutcome='fallback';run.entry.clockReason='예약할 시각이 지정되지 않아 사이트 활성화 감지를 사용합니다.';}
     return await autoLoop(run);
   });
   return {message:isSeat?'현재 좌석 화면에서 진행을 시작했습니다. 이미 선택한 좌석이 있으면 확인을 위해 중지합니다.':'예매 준비를 시작했습니다. 중지하면 진행 중인 선택 정리까지 확인합니다.'};
@@ -487,19 +748,43 @@ async function inspectRun(payload={}){
   if(wc&&(active!==id||targets.get(id)!==wc||wc.documentId!==documentId||wc.getURL()!==url||scopeVersions.get(id)!==scope||wc.missingSince!=null))throw Error('점검 중 대상 화면이 바뀌었습니다. 현재 탭에서 다시 점검해 주세요.');
   preflightResult={...buildPreflight(context),checkedAt:Date.now()};state();return {...preflightResult,preflight:preflightResult};
 }
+async function saveObservation(wc,run){
+  if(!liveAdapter.supportedUrl(wc.getURL()))throw Error('실제 좌석 선택 화면에서 정보를 기록해 주세요.');
+  const version=scopeVersions.get(wc.id),documentId=wc.documentId;
+  const observation=run?await runJs(run,wc,bookingObservation):await js(wc,bookingObservation);
+  if(wc.isDestroyed()||wc.documentId!==documentId||scopeVersions.get(wc.id)!==version)throw Error('기록 중 경기 또는 문서가 변경되었습니다.');
+  if(observation?.schemaVersion!==1)throw Error('좌석 기록에는 최신 확장이 필요합니다.');
+  observation.metadata=[...(metaStores.get(wc.id)?.values()||[])].map(row=>Object.fromEntries(['id','block','blockKey','gradeCode','grade','row','rowLabel','rowKind','number','rowIdx','colIdx','segment','aisle','neighbors','exposable','grouped'].filter(k=>row[k]!==undefined).map(k=>[k,row[k]])));
+  const directory=path.join(dataRoot,'observations');fs.mkdirSync(directory,{recursive:true});
+  const file=path.join(directory,'booking-'+Date.now()+'.json');
+  fs.writeFileSync(file,JSON.stringify(observation,null,2));
+  return {message:'현재 좌석 정보 기록: '+file,file};
+}
 async function nextGrade(run,wc,info,message){
+  if(info.grades?.length){run.mapWaitOnly=false;run.currentJob=null;run.gradeOpenedAt=null;run.awaitingGradesAt=null;setRunStatus(run,message+' · 표시된 등급 목록에서 다음 조건 확인');return;}
   if(!info.buttons.some(b=>b.label==='좌석도 전체보기'&&b.enabled)){
     // A map without a known navigation control may update itself. Keep rejected
     // combinations excluded until its observed seats actually change.
     run.mapWaitOnly=true;
-    await run.retry.next({signal:run.signal,reason:message+' 현재 지도 갱신 대기',onStatus:text=>setRunStatus(run,text),wait:pause});runs.assert(run);
+    setRunStatus(run,message+' · 좌석 데이터 변경 대기');
+    if(Number.isInteger(run.seatRevision))await runJs(run,wc,liveAdapter.waitForChange,{revision:run.seatRevision,timeoutMs:3500});
+    else await run.retry.next({signal:run.signal,reason:message+' 현재 지도 갱신 대기',onStatus:text=>setRunStatus(run,text),wait:pause});
+    runs.assert(run);
     return;
   }
   run.mapWaitOnly=false;
   await runJs(run,wc,flow.clickKnown,'좌석도 전체보기');run.currentJob=null;run.gradeOpenedAt=null;run.awaitingGradesAt=Date.now();setRunStatus(run,message+' · 다음 조건/구역 확인');
 }
 async function restartSearch(run){
-  await run.retry.next({signal:run.signal,reason:'설정한 조건을 모두 확인했습니다',onStatus:text=>setRunStatus(run,text),wait:pause});runs.assert(run);
+  const wc=targets.get(run.targetId);
+  const wait=async ms=>{
+    if(wc&&!wc.isDemo()){
+      const data=await runJs(run,wc,liveAdapter.liveRead);
+      if(Number.isInteger(data.revision)){await runJs(run,wc,liveAdapter.waitForChange,{revision:data.revision,timeoutMs:ms});return;}
+    }
+    await pause(ms,run.signal);
+  };
+  await run.retry.next({signal:run.signal,reason:'설정한 조건을 모두 확인했습니다 · 데이터 변경 시 즉시 재개',minimumMs:3000,onStatus:text=>setRunStatus(run,text),wait});runs.assert(run);
   // A new round reopens the site's own grade map before considering the old
   // failures again; merely looping over the same candidate array is forbidden.
   run.triedJobs.clear();run.excludedIds.clear();run.excludedGroups.clear();
@@ -544,7 +829,7 @@ function followNoticeDocument(run,wc){
   // refresh a pinned scope. A context-only reset or a different URL still stops.
   if(transition.url!==wc.getURL()||scopeVersions.get(wc.id)!==transition.version+1)return;
   if(run.gateDocument?.windowId===wc.id&&run.gateDocument.version===transition.version)run.gateDocument={windowId:wc.id,version:scopeVersions.get(wc.id)};
-  if(run.seatScope?.id===wc.id&&run.seatScope.version===transition.version){run.seatScope={id:wc.id,version:scopeVersions.get(wc.id)};run.currentJob=null;run.gradeOpenedAt=null;run.awaitingGradesAt=null;}
+  if(run.seatScope?.id===wc.id&&run.seatScope.version===transition.version){run.seatScope={id:wc.id,version:scopeVersions.get(wc.id)};run.currentJob=null;run.gradeOpenedAt=null;run.awaitingGradesAt=null;run.detailsReadBlocks=new Set();run.detailsReadGrades=false;run.gradeConflicts=new Map();run.triedJobs.clear();}
   run.noticeTransition=null;noticeAbsent(run);setRunStatus(run,'예매 안내 확인 후 새 화면을 확인했습니다.');
 }
 async function autoLoop(run){
@@ -558,6 +843,11 @@ async function autoLoop(run){
     if(run.observerTask){await run.observerTask;runs.assert(run);continue;}
     const wc=targetFor(run),url=wc.getURL();
     followNoticeDocument(run,wc);
+    // A slow login/queue must not consume the grace period of a later
+    // transitional route. Unsupported routes are observed only, never acted on.
+    const knownRoute=/^https:\/\/tickets\.interpark\.com\/(?:waiting(?:[/?#]|$)|gates\/ticket\/\d+)/.test(url)||url.startsWith('https://accounts.yanolja.com/')||isEntryPage(url)||liveAdapter.supportedUrl(url)||wc.isDemo()||url==='about:blank';
+    if(knownRoute)run.unsupportedSince=null;
+    if(/^https:\/\/tickets\.interpark\.com\/(?:onestop\/|waiting\/)?error(?:[/?#]|$)/.test(url))throw Error('사이트가 예매 오류 화면으로 이동했습니다. 진입 요청을 반복하지 않았습니다.');
     if(/^https:\/\/tickets\.interpark\.com\/waiting(?:[/?#]|$)/.test(url))setRunStatus(run,'대기열 진입 · 기존 순서를 유지하며 대기');
     else if(url.startsWith('https://accounts.yanolja.com/'))setRunStatus(run,'로그인 대기 · 사이트에서 직접 로그인해 주세요.');
     else if(/^https:\/\/tickets\.interpark\.com\/gates\/ticket\/\d+/.test(url)){
@@ -576,24 +866,33 @@ async function autoLoop(run){
       let status=await readEntryPage(run,wc,'gateState');
       if(status===ENTRY_READ_MOVED)continue;
       if(run.targetId!==wc.id||wc.missingSince!=null||wc.getURL()!==url)continue;
-      if((!status||status.phase==='stopped'||status.runId!==run.id)&&!run.entry.trigger&&!run.entry.requestCount)status=await runJs(run,wc,entry.armGate,{goodsCode:run.goodsCode,runId:run.id,timeoutMs:Math.max(60000,(run.openAt||Date.now())-Date.now()+30*60000)});
+      if((!status||status.phase==='stopped'||status.runId!==run.id)&&!run.entry.trigger&&!run.entry.requestCount)status=await runJs(run,wc,entry.armGate,{goodsCode:run.goodsCode,runId:run.id,allowInitiallyEnabled:true,httpRetry:run.entry.strategy==='clock'&&run.clockEligible,timeoutMs:Math.max(60000,(run.openAt||Date.now())-Date.now()+30*60000)});
       else if(status?.phase==='timeout'||status?.phase==='blocked')throw Error('예매 준비 화면의 활성화를 확인하지 못했습니다.');
       rememberGate(run,status);
+      if(status?.http){
+        const h=status.http;run.entry.httpOutcome=h.outcome;run.entry.httpCode=h.code;
+        const key=h.requestCount+':'+h.outcome+':'+h.code;
+        if(run.lastEntryHttp!==key){run.lastEntryHttp=key;runLog.event('entry-http',{result:h.outcome,message:h.code,count:h.requestCount,status:h.httpStatus});}
+        if(['blocked','unknown','expired'].includes(h.outcome))throw Error(({blocked:'서버가 진입 요청을 거절했습니다.',unknown:'서버의 진입 처리 결과를 확정하지 못했습니다.',expired:'설정한 진입 재시도 구간이 끝났습니다.'})[h.outcome]+' ['+h.code+'] 추가 요청 없이 중지했습니다.');
+      }
       if(run.targetId!==wc.id||wc.missingSince!=null||wc.getURL()!==url)continue;
       await scheduleGateClock(run,wc,status);
       if(run.targetId!==wc.id||wc.missingSince!=null||wc.getURL()!==url)continue;
       if(run.entry.trigger||run.entry.requestCount){run.entryDispatchedAt??=Date.now();if(Date.now()-run.entryDispatchedAt>10000)throw Error('진입 클릭/요청 이후 화면 이동을 확인하지 못했습니다. 중복 실행하지 않고 중지합니다.');}
-      if(gate.enabled&&status?.observedDisabled===false){run.awaitingAutoAt??=Date.now();if(Date.now()-run.awaitingAutoAt>10000)throw Error('이미 열린 준비 화면에서 사이트의 자동 진입을 확인하지 못했습니다. 예매 화면을 직접 확인해 주세요.');}
+      if(gate.enabled&&status?.observedDisabled===false&&!status?.http&&status?.clock?.outcome!=='armed'){run.awaitingAutoAt??=Date.now();if(Date.now()-run.awaitingAutoAt>10000)throw Error('이미 열린 준비 화면에서 사이트의 자동 진입을 확인하지 못했습니다. 예매 화면을 직접 확인해 주세요.');}
       setRunStatus(run,gate.enabled?'예매 버튼 활성화 확인 · 진입 중':'예매 준비 완료 · 사이트가 버튼을 열 때까지 대기');
     }
     else if(isEntryPage(url)){
-      if(Date.now()-run.started>30000&&Date.now()>(run.openAt||0)+30000)throw Error('예매 준비 화면으로 이동하지 못했습니다. 로그인과 팝업을 확인해 주세요.');
+      if(Date.now()-run.started>120000&&Date.now()>(run.openAt||0)+120000)throw Error('예매 준비 화면으로 이동하지 못했습니다. 로그인과 팝업을 확인해 주세요.');
     }
     else if(liveAdapter.supportedUrl(url)||wc.isDemo()){
       if(run.entry)run.entry.seatPageObserved=true;
+      if(!wc.isDemo()){const identity=await runJs(run,wc,directApi.bookingIdentity);run.expectedBooking=directApi.assertIdentity(run.expectedBooking||(run.goodsCode?{goodsCode:run.goodsCode}:null),identity);}
       if(run.inspectionOnly)return {message:'진입 확인 완료 · 좌석을 선택하지 않고 중지했습니다.'};
       const info=await runJs(run,wc,flow.scene),button=label=>info.buttons.some(b=>b.label===label&&b.enabled);
-      if(info.completed)return {completed:true,message:'좌석 선택 승인 · 가격/할인 화면 도착을 확인했습니다. 결제는 직접 진행해 주세요.'};
+      if(info.hasSeats||info.grades?.length)run.mapLoadingAt=null;
+      if(!info.busy)run.busySince=null;
+      if(!info.captcha&&(info.completed||new URL(url).searchParams.get('step')==='price')){const result=await finishPriceSelection(wc,run);if(result.retrySeats)continue;return result;}
       // Pin the booking context on first seat-page entry, including the time
       // spent waiting for CAPTCHA or navigating grade lists.
       const scope=scopeVersions.get(wc.id);
@@ -606,38 +905,26 @@ async function autoLoop(run){
       }
       noticeAbsent(run);
       if(!info.captcha&&manualCaptcha.status.present)manualCaptcha.clear('보안문자 화면이 닫혔습니다. 사이트의 다음 단계를 확인합니다.');
+      const inspection=inspectionState(run,info);
+      if(inspection?.ready){const recorded=await saveObservation(wc,run);return {message:inspection.message+' · '+recorded.file};}
+      if(inspection?.waiting){if(info.dialog)throw Error('정보 확인 중 사이트 안내가 표시되었습니다. '+info.dialog.text);setRunStatus(run,'보안문자 및 좌석 화면 준비 확인 · 좌석 선택 없이 기록 대기');await pause(100,run.signal);continue;}
       if(info.captcha){
-        if(run.preferences.manualCaptchaAssist){
-          if(!manualCaptcha.pending&&!run.manualAssistUnavailable){
-            try{await prepareManualCaptcha(wc,run,{background:true});runs.assert(run);}
-            catch(error){runs.assert(run);run.manualAssistUnavailable=true;manualCaptcha.clear(error.message);}
-          }
-          setRunStatus(run,manualCaptcha.status.message||'보안문자 직접 입력 대기');
-        }
-        else if(!run.preferences.autoCaptcha||run.captchaDisabled)setRunStatus(run,'보안문자 직접 입력 대기');
-        else{
-          try{
-            if(run.captchaHeld){
-              const held=await runJs(run,wc,'captcha.captchaStatus',{challengeId:run.captchaHeld.challengeId});
-              if(held?.status==='changed'){run.captchaHeld=null;continue;}
-              setRunStatus(run,run.captchaHeld.message);
-            }else{
-              setRunStatus(run,'보안문자 자동 인식 · 입력·확인 진행');
-              const result=await processCaptcha(wc,'auto',run);runs.assert(run);setRunStatus(run,result.message);
-              if(['verified','changed'].includes(result.status))continue;
-              if(['manual','uncertain'].includes(result.status)){
-                if(result.challengeId)run.captchaHeld=result;else run.captchaDisabled=true;
-              }
-            }
-          }catch(error){
-            runs.assert(run);captchaAdapter(wc,run).assertCurrent();
-            run.captchaDisabled=true;setRunStatus(run,'자동 인식 중단 · 직접 입력해 주세요. '+error.message);
-          }
-        }
+        if(run.captchaDisabled)throw Error('보안문자 자동 처리가 중단된 상태입니다. 원인을 확인한 뒤 다시 시작해 주세요.');
+        setRunStatus(run,'보안문자 자동 인식 · 입력·확인 진행');
+        const result=await processCaptcha(wc,'auto',run);runs.assert(run);setRunStatus(run,result.message);
+        if(['verified','changed'].includes(result.status))continue;
+        if(['manual','uncertain'].includes(result.status))throw Error('보안문자 자동 처리 중단 · '+result.message);
+
+      }
+      else if(['empty-selection','conflict'].includes(info.dialog?.kind)&&info.dialog.dismissible&&!info.selected.length){
+        const recovered=await selection.rollback(selectionAdapter(wc,run),new Set(),{timeoutMs:8000,pollMs:40,observationGraceMs:160});runs.assert(run);
+        if(!recovered)throw Error('좌석 안내 확인 후 화면 복구를 확인하지 못했습니다.');
+        setRunStatus(run,'좌석 안내 확인 완료 · 최신 후보를 다시 읽습니다.');continue;
       }
       else if(info.dialog)throw Error('사이트 안내를 확인해 주세요. '+info.dialog.text);
+      else if(info.busy){run.busySince??=Date.now();if(Date.now()-run.busySince>15000)throw Error('사이트 로딩이 15초 이상 계속되어 중지했습니다. 현재 화면을 확인해 주세요.');setRunStatus(run,'사이트 로딩 완료 대기 · 좌석·구역 동작 보류');}
       else if(info.selected.length)throw Error('기존에 선택한 좌석이 있습니다. 확인/해제한 뒤 다시 시작해 주세요.');
-      else if(run.awaitingGradesAt&&info.hasSeats){if(Date.now()-run.awaitingGradesAt>8000)throw Error('구역 목록으로 돌아가는 화면 전환을 확인하지 못했습니다.');setRunStatus(run,'구역 목록 화면 도착을 기다리는 중');}
+      else if(run.awaitingGradesAt&&info.hasSeats&&!info.grades.length){if(Date.now()-run.awaitingGradesAt>8000)throw Error('구역 목록으로 돌아가는 화면 전환을 확인하지 못했습니다.');setRunStatus(run,'구역 목록 화면 도착을 기다리는 중');}
       else if(button('직접 좌석 선택하기')){
         if(run.directMapAttempt){
           if(Date.now()-run.directMapAttempt>12000)throw Error('직접 좌석 선택 후 지도 전환을 확인하지 못했습니다. 같은 버튼을 다시 누르지 않고 중지합니다.');
@@ -646,13 +933,28 @@ async function autoLoop(run){
           run.directMapAttempt=Date.now();await runJs(run,wc,flow.clickKnown,'직접 좌석 선택하기');run.gradeOpenedAt=Date.now();setRunStatus(run,'직접 좌석 선택 화면 진입');continue;
         }
       }
-      else if(info.grades.length&&!run.currentJob&&!info.hasSeats){
+      else if(info.grades.length&&!run.currentJob){
         run.awaitingGradesAt=null;
-        const plan=gradePlan(info.grades,run.preferences);const job=plan.find(j=>!run.triedJobs.has(JSON.stringify([j.tierIndex,j.name])));
-        if(!job)await restartSearch(run);
+        const allowedAreas=[...run.preferences.areas,...run.preferences.tiers.flatMap(t=>t.areas)];
+        if(!wc.isDemo()&&!run.detailsReadGrades&&!gradeStores.get(wc.id)?.size&&allowedAreas.some(a=>!info.grades.some(g=>labelKey(g.name)===labelKey(a)))){
+          const details=await runJs(run,wc,seatDetails.readDetails,{expected:run.expectedBooking,blockKeys:[],includeGrades:true,expiresAt:Date.now()+20000});
+          applyGradeDetails(wc,details,run);run.detailsReadGrades=true;
+        }
+        const grades=info.grades.map(g=>({...g,code:[...(gradeStores.get(wc.id)||[])].find(([,name])=>name===g.name)?.[0]}));
+        const configured=run.preferences.tiers.length?run.preferences.tiers:run.preferences.areas.length?[{areas:run.preferences.areas}]:[];
+        if(configured.length&&configured.every(t=>t.areas.length&&!t.areas.some(a=>grades.some(g=>[g.name,g.code].some(v=>v!=null&&labelKey(v)===labelKey(a))))))throw Error('설정한 허용 구역 이름·코드가 현재 경기 목록에 없습니다. 현재 경기에서 이름·코드를 읽고 조건을 수정해 주세요.');
+        const plan=gradePlan(grades,run.preferences);const job=plan.find(j=>!run.triedJobs.has(JSON.stringify([j.tierIndex,j.name]))&&(run.metadataCooldown?.get(JSON.stringify([j.tierIndex,j.name]))||0)<=Date.now());
+        if(!job){
+          const cooled=plan.length&&plan.every(j=>(run.metadataCooldown?.get(JSON.stringify([j.tierIndex,j.name]))||0)>Date.now());
+          if(cooled){setRunStatus(run,'좌석 상세 정보 미확인 구역 · 30초 재조회 간격 대기');await pause(1000,run.signal);}
+          else await restartSearch(run);
+        }
         else{
           const data=await runJs(run,wc,liveAdapter.liveRead);const row=data.rows.find(r=>r.name===job.name);
-          if(row){runs.assert(run);await measured(wc,'grade-open',()=>wc.seatAction(row,'click'));runs.assert(run);run.currentJob=job;run.directMapAttempt=null;run.gradeOpenedAt=Date.now();run.triedJobs.add(JSON.stringify([job.tierIndex,job.name]));setRunStatus(run,`${run.retry.cycle}차 · ${job.tierIndex+1}순위 · ${job.name} 확인`);continue;}
+          if(row){
+            const cooldownKey=JSON.stringify([job.tierIndex,job.name]);
+            if(run.metadataCooldown?.has(cooldownKey)){run.metadataCooldown.delete(cooldownKey);run.detailsReadBlocks?.clear();run.detailsReadGrades=false;}
+            runs.assert(run);const opened=await measured(wc,'grade-open',()=>wc.seatAction(row,'click'));runs.assert(run);if(opened?.retry){setRunStatus(run,'구역 목록 갱신 확인 중');await pause(100,run.signal);continue;}run.currentJob=job;run.directMapAttempt=null;run.gradeOpenedAt=Date.now();run.triedJobs.add(JSON.stringify([job.tierIndex,job.name]));setRunStatus(run,`${run.retry.cycle}차 · ${job.tierIndex+1}순위 · ${job.name} 확인`);continue;}
           else{run.triedJobs.add(JSON.stringify([job.tierIndex,job.name]));}
         }
       }
@@ -660,7 +962,15 @@ async function autoLoop(run){
         run.directMapAttempt=null;
         run.gradeOpenedAt??=Date.now();
         const result=await candidatesFor(wc,run.preferences,{tierIndex:run.currentJob?.tierIndex,excludedIds:run.excludedIds,excludedGroups:run.excludedGroups});runs.assert(run);
-        const {rows}=result;let {groups}=result;
+        const {rows}=result;let {groups}=result;run.seatRevision=result.data.revision;
+        if(!groups.length&&await recoverSeatDetails(run,wc,rows))continue;
+        const unresolved=rows.filter(r=>r.kind==='seat'&&!r.grade&&run.gradeConflicts?.has(r.gradeCode));
+        if(unresolved.length&&!groups.length){
+          const conflicts=[...new Set(unresolved.map(r=>r.gradeCode))].map(code=>run.gradeConflicts.get(code));
+          runLog.event('grade-unresolved',{gradeConflicts:conflicts,count:unresolved.length});
+          if(run.currentJob&&(info.grades?.length||info.buttons?.some(b=>b.label==='좌석도 전체보기'&&b.enabled))){await nextGrade(run,wc,info,'이 구역은 등급 이름이 여러 개여서 제외하고 다음 구역을 확인합니다.');continue;}
+          throw Error('좌석 구역 이름을 확정하지 못했습니다. 같은 코드에 서로 다른 이름이 있고 좌석별 이름도 없어 조건을 검증할 수 없습니다. 충돌한 코드·이름은 자동 로그에 저장했습니다.');
+        }
         const changed=run.retry.observe(run.currentJob?.name||'current-map',rows);
         if(changed&&run.mapWaitOnly){run.excludedIds.clear();run.excludedGroups.clear();groups=rankGroups(rows,run.preferences,{tierIndex:run.currentJob?.tierIndex});}
         if(groups.length){
@@ -669,6 +979,7 @@ async function autoLoop(run){
           // An accepted completion remains success even if cancellation arrived
           // while its final server response was still in flight.
           if(selected.completed)return selected;
+          if(selected.retrySeats)continue;
           runs.assert(run);if(!selected.exhausted)return selected;
           if(selected.limited){setRunStatus(run,'20개 후보 확인 · 최신 지도에서 남은 후보를 이어서 확인');continue;}
           await nextGrade(run,wc,await runJs(run,wc,flow.scene),'현재 후보들이 선점되어 제외했습니다.');
@@ -676,14 +987,21 @@ async function autoLoop(run){
         else{
           const elapsed=Date.now()-run.gradeOpenedAt;
           const incomplete=rows.some(r=>r.kind==='seat'&&(r.row==null||!r.grade));
-          if((!incomplete&&elapsed>1500)||(incomplete&&elapsed>8000))await nextGrade(run,wc,info,incomplete?'좌석 상세 정보 일부를 확인하지 못했습니다.':'현재 지도에 조건을 만족하는 좌석이 없습니다.');
-          else setRunStatus(run,`좌석 정보 로딩 · 보이는 후보 ${rows.length}개 · 조건에 맞는 조합 0개${incomplete?' · 열·구역 상세 정보 확인 중':''}`);
+          if(elapsed>=250){
+            if(incomplete&&run.currentJob){run.metadataCooldown??=new Map();run.metadataCooldown.set(JSON.stringify([run.currentJob.tierIndex,run.currentJob.name]),Date.now()+30000);runLog.event('metadata-unresolved',{message:run.currentJob.name+' · 상세 조회 후에도 미확인 · 30초 재조회 간격',count:rows.length});}
+            await nextGrade(run,wc,info,incomplete?'조회 완료 후에도 좌석 상세 정보가 부족합니다.':'현재 지도에 조건을 만족하는 좌석이 없습니다.');
+          }
+          else setRunStatus(run,incomplete?`좌석 상세 정보 확인 중 · 보이는 후보 ${rows.length}개 · 열·구역 정보 대기`:`조건에 맞는 조합 없음 · 보이는 후보 ${rows.length}개 · 지도 갱신 재확인 대기`);
         }
       }
-      else{run.awaitingGradesAt??=Date.now();if(Date.now()-run.awaitingGradesAt>12000)throw Error('좌석 화면 로딩을 확인하지 못했습니다. 화면을 확인해 주세요.');}
+      else{run.mapLoadingAt??=Date.now();if(Date.now()-run.mapLoadingAt>12000)throw Error('좌석 화면 로딩을 확인하지 못했습니다. 화면을 확인해 주세요.');}
     }
     else if(url==='about:blank'){}
-    else if(Date.now()-run.started>15000)throw Error('지원하는 예매 진행 화면이 아닙니다. 현재 화면을 확인해 주세요.');
+    else{
+      run.unsupportedSince??=Date.now();
+      if(Date.now()-run.unsupportedSince>15000)throw Error('지원하는 예매 진행 화면이 아닙니다. 현재 화면을 확인해 주세요.');
+      setRunStatus(run,'예매 화면 전환 대기 · 추가 요청 없음');
+    }
     await pause(100,run.signal);
   }
 }
@@ -695,13 +1013,15 @@ async function command(action, payload) {
   if(manualCodePending&&!['state','stop','captchaStop','focus','restoreWindow','alwaysOnTop','pairingInfo'].includes(action))throw Error('직접 입력한 보안문자를 처리하고 있습니다. 결과를 기다려 주세요.');
   switch(action) {
     case 'state': state(); return {};
+    case 'openLogs': {fs.mkdirSync(runLog.directory,{recursive:true});const error=await shell.openPath(runLog.directory);if(error)throw Error('로그 폴더를 열지 못했습니다. '+error);return {message:'실행별 자동 로그 폴더를 열었습니다.'};}
     case 'preflight': return inspectRun(payload);
     case 'restoreWindow': revealPanel(true);rememberWindow();return {desktop:desktopState(),message:'도우미 창을 기본 모니터 왼쪽으로 옮겼습니다.'};
     case 'alwaysOnTop': {desktop.alwaysOnTop=payload===true;win?.setAlwaysOnTop(desktop.alwaysOnTop);persistDesktop();updateWindowMenu();state();return {desktop:desktopState(),message:desktop.alwaysOnTop?'도우미를 항상 위에 표시합니다.':'다른 창을 도우미 위에 올릴 수 있습니다.'};}
     case 'pairingInfo': return {...bridge.getState(),...(bridgeError?{pairCode:null,message:bridgeError}:{}),extensionPath};
-    case 'refreshPairing': {if(bridgeError)throw Error(bridgeError);const info=bridge.refreshPairing();browserStatus={...bridge.getState()};state();return {...info,extensionPath};}
+    case 'refreshPairing': {if(bridgeError)throw Error(bridgeError);extensionReloadRequested=false;const info=bridge.refreshPairing();browserStatus={...bridge.getState()};state();return {...info,extensionPath};}
     case 'copyPairCode': {if(bridgeError)throw Error(bridgeError);const info=bridge.getState();if(!info.pairCode||Date.now()>info.expiresAt)throw Error('연결 코드가 없거나 만료되었습니다. 새 연결 코드를 먼저 만드세요.');clipboard.writeText(info.pairCode);return {message:'연결 코드를 복사했습니다. Chrome 확장 팝업에 붙여 넣으세요.'};}
-    case 'openExtensionFolder': {const error=await shell.openPath(extensionPath);if(error)throw Error(error);return {message:'Chrome에 등록할 확장 폴더를 열었습니다.'};}
+    case 'updateExtension': return updateExtension();
+    case 'openExtensionFolder': {if(stableRoot)installExtension({source:extensionSource,destination:extensionPath});const error=await shell.openPath(extensionPath);if(error)throw Error(error);return {message:'Chrome에 등록할 확장 폴더를 열었습니다.'};}
     case 'openSeatingGuide': {
       let url;try{url=new URL(payload?.url);}catch{throw Error('공식 좌석 안내 주소를 확인하지 못했습니다.');}
       if(url.origin!=='https://ent-ticketimage.interparkcdn.net'||!/^\/display\/articles\/[a-f0-9]{32}\.(?:jpg|png|webp)$/i.test(url.pathname)||url.username||url.password||url.search||url.hash)throw Error('허용된 공식 좌석 안내 이미지만 열 수 있습니다.');
@@ -725,6 +1045,7 @@ async function command(action, payload) {
     }
     case 'focus': await current().focus();return {message:'Chrome 예매 탭으로 이동했습니다.'};
     case 'zoom': {const delta=Number(payload);if(![-.1,0,.1].includes(delta))throw Error('잘못된 배율');await current().zoom(delta);return {};}
+    case 'recordObservation': return saveObservation(current());
     case 'scan': return scan();
     case 'seat': return seatAction(payload);
     case 'preferences': savePreferences(payload);state('현재 구장의 선호 조건을 저장했습니다.');return {preferences,venueProfiles:venueStore.getState()};
@@ -738,6 +1059,13 @@ async function command(action, payload) {
       preferences=venueStore.create(payload?.name,payload?.preferences);
       state('현재 조건으로 새 구장 설정을 저장했습니다.');return {preferences,venueProfiles:venueStore.getState(),message:'현재 조건으로 새 구장 설정을 저장했습니다.'};
     }
+    case 'gateOpening': {
+      const wc=current(),url=wc.getURL(),doc=wc.documentId,u=new URL(url),match=u.origin==='https://tickets.interpark.com'&&u.pathname.match(/^\/gates\/ticket\/(\d{8})\/?$/);
+      if(!match)throw Error('예매 준비 화면을 먼저 선택해 주세요.');
+      const result=await readPostseasonOpening(match[1],(u,o)=>net.fetch(u,o));
+      if(wc.documentId!==doc||wc.getURL()!==url||current()!==wc)throw Error('조회 중 준비 화면이 변경되었습니다.');
+      return {opening:result?{...result,openingSource:'공식 포스트시즌 API'}:{openingReason:'현재 공식 포스트시즌 목록에 시작 시각이 없습니다. 직접 입력해 주세요.'}};
+    }
     case 'games': return games();
     case 'clock': return syncClock();
     case 'start': return startRun(payload);
@@ -745,12 +1073,12 @@ async function command(action, payload) {
     case 'manualCaptchaPrepare':
     case 'manualCaptchaFocus': {
       const wc=runner?targetFor(runner):current();
-      if(runner){runner.captchaDisabled=true;runner.preferences.manualCaptchaAssist=true;runner.manualAssistUnavailable=false;}
+      if(runner)throw Error('자동 진행에서는 보안문자를 자동 입력합니다. 직접 입력 보조로 전환할 수 없습니다.');
       if(action==='manualCaptchaFocus')await wc.focus();
       return prepareManualCaptcha(wc,runner);
     }
     case 'manualCaptchaSubmit': {
-      if(runner){runner.captchaDisabled=true;runner.preferences.manualCaptchaAssist=true;}
+      if(runner)throw Error('자동 진행에서는 보안문자를 자동 입력합니다. 직접 입력 보조로 전환할 수 없습니다.');
       const result=await manualCaptcha.submit(payload);
       return {...result,manualCaptcha:manualCaptcha.status};
     }
@@ -758,20 +1086,22 @@ async function command(action, payload) {
     case 'captchaSubmit': return processCaptcha(current(),'submit');
     case 'captchaStop': if(runner)await stopRun('보안문자 처리와 자동 진행을 중지했습니다.');return stopCaptcha();
     case 'code': {
-      // An explicit manual submission takes precedence for this run, including
-      // the time spent awaiting Chrome's reply.
-      if(runner)runner.captchaDisabled=true;manualCodePending=true;
+      // Legacy standalone input is unavailable while automatic booking owns the page.
+      if(runner)throw Error('자동 진행에서는 보안문자를 자동 입력합니다. 직접 입력 보조로 전환할 수 없습니다.');manualCodePending=true;
       try{await js(runner?targetFor(runner):current(),flow.enterCode,String(payload||'').trim().toUpperCase());return {message:'보안문자를 입력했습니다. 인증 결과를 확인합니다.'};}
       finally{manualCodePending=false;}
     }
     case 'recommend': if(payload?.preferences)preferences=normalizePreferences(payload.preferences);return recommend();
+    case 'catalog': return readCatalog();
     case 'choose': {const wc=current();if(!liveAdapter.supportedUrl(wc.getURL())&&!wc.isDemo())throw Error('좌석 화면에서 실행해 주세요.');const run=beginRun(wc,payload?.preferences,'manual');return launch(run,async()=>{await ensureNetwork(wc);runs.assert(run);const {groups}=await candidatesFor(wc,run.preferences);runs.assert(run);if(!groups.length)throw Error('현재 지도에 조건에 맞는 조합이 없습니다. 상세 정보가 없다면 Chrome에서 구역을 다시 선택해 주세요.');return selectCandidates(wc,run,groups);});}
     case 'complete': {const wc=current();if(!liveAdapter.supportedUrl(wc.getURL())&&!wc.isDemo())throw Error('좌석 화면에서 실행해 주세요.');const run=beginRun(wc,payload?.preferences,'manual');return launch(run,async()=>{
       await ensureNetwork(wc);runs.assert(run);
       const adapter=selectionAdapter(wc,run),info=await adapter.snapshot();runs.assert(run);
       const seats=metadata.enrich(info.selected.map(id=>({id,available:true})),metaStores.get(wc.id),gradeStores.get(wc.id));
       if(!rankGroups(seats,run.preferences).some(g=>g.seats.length===info.selected.length&&g.seats.every(s=>info.selected.includes(s.id))))throw Error('선택된 좌석이 현재 매수·연석·구역·열 조건을 만족하는지 확인하지 못했습니다.');
-      return selection.completeSelection({adapter,signal:run.signal,preferences:run.preferences,onStatus:text=>setRunStatus(run,text)});
+      if(!wc.isDemo())return runHttpBooking(wc,run,{seats,resumeSelected:true});
+      const result=await selection.completeSelection({adapter,signal:run.signal,preferences:run.preferences,onStatus:text=>setRunStatus(run,text)});
+      return result.completed?finishPriceSelection(wc,run,result):result;
     });}
     default: throw new Error('지원하지 않는 동작입니다.');
   }
@@ -780,19 +1110,19 @@ app.whenReady().then(async()=>{
   if(!smoke&&!app.requestSingleInstanceLock()){app.quit();return;}
   app.on('second-instance',()=>revealPanel());app.on('activate',()=>revealPanel());
   const bounds=desktopSettings.visibleBounds(desktop.windowBounds,screen.getAllDisplays(),screen.getPrimaryDisplay());
-  win=new BrowserWindow({...bounds,minWidth:Math.min(360,bounds.width),minHeight:Math.min(500,bounds.height),show:!smoke,alwaysOnTop:desktop.alwaysOnTop,autoHideMenuBar:true,backgroundColor:'#101827',title:'야구 티켓팅 도우미',webPreferences:{preload:path.join(__dirname,'preload.js'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
+  win=new BrowserWindow({...bounds,minWidth:Math.min(360,bounds.width),minHeight:Math.min(500,bounds.height),show:!smoke,alwaysOnTop:desktop.alwaysOnTop,autoHideMenuBar:true,backgroundColor:'#101827',title:'야구 티켓팅 도우미',webPreferences:{preload:path.join(__dirname,'preload.js'),contextIsolation:true,nodeIntegration:false,sandbox:true,backgroundThrottling:false}});
   win.on('move',rememberWindow);win.on('resize',rememberWindow);
   screen.on('display-removed',()=>revealPanel());screen.on('display-metrics-changed',()=>{if(!win.isMinimized())revealPanel();});
   if(!smoke){try{createTray();}catch(error){console.warn('Tray unavailable:',error.message);}updateWindowMenu();}
   win.webContents.setWindowOpenHandler(()=>({action:'deny'}));win.webContents.on('will-navigate',e=>e.preventDefault());
-  bridge=new BrowserBridge(smoke?{port:0}:{});
+  bridge=new BrowserBridge(smoke?{port:0}:{pairingStore:createPairingStore({file:path.join(dataRoot,'chrome-pairing.bin'),safeStorage,onError:message=>{diagnosticWarning=message;}})});
   bridge.on('tabs',trackTabs);bridge.on('document',onDocument);bridge.on('event',onBrowserEvent);
-  bridge.on('connected',()=>{browserStatus={...bridge.getState()};state('Chrome이 연결되었습니다. 예매할 탭을 선택해 주세요.');});
+  bridge.on('connected',()=>{browserStatus={...bridge.getState()};state('Chrome이 연결되었습니다. 예매할 탭을 선택해 주세요.');if(!smoke&&!runner&&!extensionReloadRequested&&browserStatus.extensionReloadSupported&&browserStatus.extensionVersion!==require('../package.json').version)void updateExtension().then(result=>state(result.message)).catch(error=>{runLog.diagnostic('command-error',{action:'updateExtension',message:error.message});state(error.message);});});
   bridge.on('disconnected',()=>{browserStatus={...bridge.getState()};captchaService?.cancel();void stopRun('Chrome 연결이 끊겨 중지했습니다.');trackTabs([]);state();});
-  try{await bridge.start();bridgeReady=true;browserStatus={...bridge.getState()};}catch(error){bridgeError=desktopSettings.bridgeFailure(error);browserStatus={connected:false,message:bridgeError};}
+  try{await bridge.start();if(stableRoot)installExtension({source:extensionSource,destination:extensionPath});bridgeReady=true;browserStatus={...bridge.getState()};}catch(error){bridgeError=desktopSettings.bridgeFailure(error);browserStatus={connected:false,message:bridgeError};}
   ipcMain.handle('helper:run',async(event,action,payload)=>{
     if(closing||!win||win.isDestroyed()||event.sender!==win.webContents||event.senderFrame?.url!==SHELL)return {error:'허용되지 않은 요청입니다.'};
-    try{return await command(action,payload);}catch(error){return {error:error.message};}
+    try{return await command(action,payload);}catch(error){if(!runs.current)runLog.diagnostic('command-error',{action,message:error.message});return {error:error.message};}
   });
   let closeReady=false,closePending=false;
   win.on('close',event=>{
@@ -804,6 +1134,7 @@ app.whenReady().then(async()=>{
   await win.loadURL(SHELL);state();
   // Model startup happens before booking and never delays entry preparation.
   if(!smoke)void getCaptchaService().warmup();
+  if(!smoke&&process.argv.includes('--live-football-test'))require('./live-football-test')({bridge,targets,command,runs,dataRoot,state});
   if(smoke)await require('./panel-smoke')({app,win,bridge,command,state,targets});
 }).catch(error=>{console.error(error);app.exit(1);});
 app.on('window-all-closed',()=>app.quit());

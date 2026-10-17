@@ -2,12 +2,13 @@
 (()=>{
   if(globalThis.__baseballContentInstalled)return;globalThis.__baseballContentInstalled=true;
   let leaseUntil=0,demoTabId=null;const demo=location.href===chrome.runtime.getURL('demo.html'),demoDocumentId=demo?'demo:'+crypto.randomUUID():null;
-  const demoReady=demo?chrome.tabs.getCurrent().then(tab=>{demoTabId=tab.id;}):Promise.resolve();const stop=()=>{window.__bearsEntry?.stop();window.__bearsGate?.stop();window.__bearsCaptchaPage?.cancel();window.__ticketManualCaptchaPage?.cancel();};
+  const demoReady=demo?chrome.tabs.getCurrent().then(tab=>{demoTabId=tab.id;}):Promise.resolve();const stop=()=>{if(window.__ticketDirectApi)window.__ticketDirectApi.cancelled=true;if(window.__ticketHttpBooking){window.__ticketHttpBooking.cancelled=true;try{const r=JSON.parse(sessionStorage.getItem("baseball/http-booking")||"null");if(r){r.cancelled=true;sessionStorage.setItem("baseball/http-booking",JSON.stringify(r));}}catch{}}window.__ticketSeatChanges?.stop();window.__bearsEntry?.stop();window.__bearsGate?.stop();window.__bearsCaptchaPage?.cancel();window.__ticketManualCaptchaPage?.cancel();};
   const ready=()=>demoReady.then(()=>chrome.runtime.sendMessage({type:'baseball-document',documentEpoch:String(performance.timeOrigin),...(demo?{demoTabId,documentId:demoDocumentId}:{})})).catch(()=>{});
   chrome.runtime.onMessage.addListener((message,sender,sendResponse)=>{
     if(sender.id!==chrome.runtime.id||sender.tab)return;
     if(demo&&message?.demoTabId!==demoTabId)return;
     if(demo&&(message?.demoDocumentId||message?.type==='baseball-action')&&message.demoDocumentId!==demoDocumentId){sendResponse({error:'페이지가 바뀌어 이전 화면의 동작을 취소했습니다.'});return;}
+    if(message?.type==='baseball-seat-update'){const state=window.__ticketSeatChanges;if(state){state.revision++;for(const fn of [...state.listeners])fn();}sendResponse({received:true});return;}
     if(message?.type==='baseball-ping'){sendResponse({ready:true,...(demo?{documentId:demoDocumentId}:{})});return;}
     if(message?.type==='baseball-lease'){leaseUntil=performance.now()+5000;sendResponse({ready:true});return;}
     if(message?.type==='baseball-stop'){leaseUntil=0;stop();sendResponse({stopped:true});return;}
