@@ -14,10 +14,17 @@ async function readDetails({expected,blockKeys=[],includeGrades=false,expiresAt}
   const readContext=()=>readBookingContext().context;
   const c=readContext();
   const matches=x=>x?.goods?.goodsCode===expected.goodsCode&&x?.goods?.placeCode===expected.placeCode&&x?.playSeq?.playSeq===expected.playSeq;
+  let recovery=null;
+  const validRecovery=(state,current)=>state&&window.__ticketHttpBooking===state&&state.stage==='rejected'&&state.status==='blocked'&&state.code==='HTTP_METADATA_CHANGED'
+    &&state.mutationStarted===false&&Array.isArray(state.held)&&!state.held.length&&!state.pending&&!state.cancelled
+    &&state.identity===[expected.goodsCode,expected.placeCode,expected.playSeq].join(':')&&state.context?.sessionId===current.sessionId
+    &&Number.isFinite(state.expiresAt)&&Date.now()<=state.expiresAt
+    &&state.expected===JSON.stringify([current.goods,current.playSeq,current.sessionId,current.channelType,current.bizCode,current.seats||[],current.prices||[]]);
   const check=()=>{
     const current=readContext();
     if(location.origin!=='https://tickets.interpark.com'||location.pathname!=='/onestop/seat'||new URL(location.href).searchParams.get('step')==='price'||
       !matches(current)||!c.sessionId||current.sessionId!==c.sessionId||Date.now()>expiresAt)throw Error('상세 정보를 읽는 동안 예매 화면 또는 세션이 바뀌었습니다.');
+    if(recovery&&!validRecovery(recovery,current))throw Error('좌석 상세 변경을 재확인하는 동안 실행 상태가 바뀌었습니다.');
     if(c.goods.isInterlocking!==false||c.goods.reserved!==true)throw Error('확인된 일반 지정석만 상세 조회할 수 있습니다.');
     if([...document.querySelectorAll('img[alt="캡챠 이미지"],[role="alertdialog"],[role="dialog"][aria-modal="true"]')].some(shown)||
       [...document.querySelectorAll('button')].some(e=>shown(e)&&e.textContent.trim()==='확인하고 예매하기')||
@@ -27,7 +34,16 @@ async function readDetails({expected,blockKeys=[],includeGrades=false,expiresAt}
   };
   check();
   const observed=new Set([...document.querySelectorAll('circle.js-seat[id]')].map(e=>e.parentElement.id).filter(id=>id.startsWith('seat_block_')).map(id=>id.slice(11)));
-  if(blockKeys.some(k=>typeof k!=='string'||k.length>100||!observed.has(k)))throw Error('현재 지도에 없는 구역은 조회하지 않습니다.');
+  if(blockKeys.some(k=>typeof k!=='string'||k.length>100))throw Error('현재 지도에 없는 구역은 조회하지 않습니다.');
+  if(blockKeys.some(k=>!observed.has(k))){
+    // A cross-map candidate may have changed after its original map closed.
+    // Only this document's rejected, mutation-free HTTP attempt authorizes
+    // rereading its changed blocks; arbitrary off-map queries remain blocked.
+    recovery=window.__ticketHttpBooking;
+    const changed=new Set(Array.isArray(recovery?.changedIds)?recovery.changedIds:[]),seats=Array.isArray(recovery?.seats)?recovery.seats:[];
+    const allowed=new Set(seats.filter(seat=>changed.has(seat.id)).map(seat=>seat.blockKey));
+    if(!validRecovery(recovery,c)||blockKeys.some(k=>!observed.has(k)&&!allowed.has(k)))throw Error('현재 지도에 없는 구역은 조회하지 않습니다.');
+  }
   const baseHeaders={'Content-Type':'application/json','X-Requested-With':'XMLHttpRequest','X-Onestop-Channel':c.channelType||'NOL','X-Onestop-Session':c.sessionId};
   const request=async(url,options)=>{
     check();const response=await fetch(url,{credentials:'same-origin',cache:'no-store',redirect:'error',signal:AbortSignal.timeout(5000),...options});

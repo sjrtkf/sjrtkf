@@ -8,7 +8,7 @@ function fixture({captcha=false,foreign=false,changeSession=false,gradeRows=[{se
   const context={sessionId:'private-session',bizCode:'private-biz',channelType:'NOL',goods:{goodsCode:expected.goodsCode,placeCode:expected.placeCode,reserved:true,isInterlocking:false,preOpt:'private-token'},playSeq:{playSeq:'001'}};
   const initial=structuredClone(context),calls=[];
   const circle={parentElement:{id:'seat_block_001:101'},getBoundingClientRect:()=>({width:2,height:2})};
-  const sandbox={Date,URL,URLSearchParams,AbortSignal,location:{origin:'https://tickets.interpark.com',pathname:'/onestop/seat',href:'https://tickets.interpark.com/onestop/seat'},
+  const sandbox={Date,URL,URLSearchParams,AbortSignal,window:{},location:{origin:'https://tickets.interpark.com',pathname:'/onestop/seat',href:'https://tickets.interpark.com/onestop/seat'},
     sessionStorage:{getItem:k=>k==='interpark/context'?JSON.stringify(context):null},getComputedStyle:()=>({display:'block',visibility:'visible'}),
     document:{querySelector:s=>s==='#__NEXT_DATA__'?{textContent:JSON.stringify({props:{pageProps:{initData:initial}}})}:null,querySelectorAll:s=>s==='circle.js-seat[id]'?[circle]:captcha&&s.includes('캡챠')?[circle]:[]},
     fetch:async(url,options)=>{calls.push({url,options});if(changeSession)context.sessionId='changed';if(changeRound&&options.method==='POST')context.playSeq.playSeq='002';
@@ -69,4 +69,39 @@ test('spacing variants deduplicate while genuinely ambiguous grades do not abort
   const result=await fixture({gradeRows:[{seatGrade:'1',seatGradeName:'블루 존'},{seatGrade:'1',seatGradeName:'블루존'},{seatGrade:'2',seatGradeName:'일반석'},{seatGrade:'2',seatGradeName:'시야방해석'},{seatGrade:'3',seatGradeName:'W석'}]}).run();
   assert.deepEqual(JSON.parse(JSON.stringify(result.grades)),[{code:'1',name:'블루 존'},{code:'3',name:'W석'}]);
   assert.equal(result.duplicateCount,1);assert.deepEqual(JSON.parse(JSON.stringify(result.gradeConflicts)),[{code:'2',names:['일반석','시야방해석']}]);
+});
+
+function offMapRecovery(){
+  const f=fixture(),context=JSON.parse(f.sandbox.sessionStorage.getItem('interpark/context')),id='seat_block_'+expected.goodsCode+':'+expected.placeCode+':001:466';
+  const proof={stage:'rejected',status:'blocked',code:'HTTP_METADATA_CHANGED',mutationStarted:false,held:[],pending:false,cancelled:false,
+    identity:[expected.goodsCode,expected.placeCode,expected.playSeq].join(':'),context,expiresAt:Date.now()+60000,
+    expected:JSON.stringify([context.goods,context.playSeq,context.sessionId,context.channelType,context.bizCode,context.seats||[],context.prices||[]]),
+    changedIds:[id],seats:[{id,blockKey:'001:101'}]};
+  f.sandbox.window.__ticketHttpBooking=proof;f.sandbox.document.querySelectorAll=()=>[];
+  return {...f,proof};
+}
+
+test('a mutation-free metadata rejection can rehydrate its changed block after leaving that map',async()=>{
+  const f=offMapRecovery(),result=await f.run();assert.equal(result.blocks[0].blockKey,'001:101');assert.equal(f.calls.length,2);
+  assert.ok(f.calls.every(call=>call.options.method==='GET'||JSON.parse(call.options.body).query.startsWith('query ')));
+  assert.ok(!JSON.stringify(result).includes('private-'));assert.ok(!JSON.stringify(result).includes('changedIds'));
+});
+
+test('off-map recovery rejects arbitrary blocks, held seats, uncertain outcomes and stale execution proof before any request',async()=>{
+  const changes=[
+    f=>{delete f.sandbox.window.__ticketHttpBooking;},f=>{f.proof.status='uncertain';},f=>{f.proof.code='HTTP_OUTCOME_UNKNOWN';},
+    f=>{f.proof.mutationStarted=true;},f=>{delete f.proof.mutationStarted;},f=>{f.proof.held=[{seatInfoId:'held'}];},
+    f=>{f.proof.stage='preselect';},f=>{f.proof.cancelled=true;},f=>{f.proof.pending=true;},f=>{f.proof.expiresAt=0;},
+    f=>{f.proof.identity='another-event';},f=>{f.proof.context.sessionId='changed';},f=>{f.proof.expected='stale';},
+    f=>{f.proof.changedIds=[];},f=>{f.proof.seats[0].blockKey='001:102';}
+  ];
+  for(const change of changes){const f=offMapRecovery();change(f);await assert.rejects(f.run(),/현재 지도에 없는/);assert.equal(f.calls.length,0);}
+});
+
+test('off-map recovery discards a read if its HTTP attempt is cancelled or replaced while awaiting the response',async()=>{
+  for(const replace of [false,true]){
+    const f=offMapRecovery(),fetch=f.sandbox.fetch;
+    f.sandbox.fetch=async(...args)=>{const response=await fetch(...args);if(replace)f.sandbox.window.__ticketHttpBooking={...f.proof};else f.proof.cancelled=true;return response;};
+    await assert.rejects(f.run({includeGrades:false}),/실행 상태가 바뀌/);assert.equal(f.calls.length,1);
+  }
 });

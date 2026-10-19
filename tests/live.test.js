@@ -17,7 +17,7 @@ test('401번째 이후에 있는 선호석도 전체 후보 풀에서 추천한�
   const result=vm.runInNewContext(readScript(),{document:{querySelector:()=>null,querySelectorAll:selector=>selector==='circle.js-seat[id]'?circles:[]},getComputedStyle:()=>({visibility:'visible',display:'block'}),innerWidth:1000,innerHeight:1000});
   assert.equal(result.rows.length,450);
   const rows=Array.from(result.rows,(s,i)=>({...s,grade:i>=400?'선호 구역':'다른 구역',block:'118',row:1,number:i+1,colIdx:i,segment:'same',obstructed:false,aisle:i===400,neighbors:['seat-'+(i-1),'seat-'+(i+1)]}));
-  const groups=rankGroups(rows,{areas:['선호 구역']});assert.equal(groups.length,49);assert.equal(groups[0].seats[0].id,'seat-400');
+  const groups=rankGroups(rows,{areas:['선호 구역'],fallbackAnywhere:false});assert.equal(groups.length,49);assert.equal(groups[0].seats[0].id,'seat-400');
 });
 test('seat dispatch ignores occlusion and viewport clipping but honors real modals',()=>{
   const vm=require('node:vm'),{liveAction}=require('../src/live-adapter');let events=[],blocked=false;

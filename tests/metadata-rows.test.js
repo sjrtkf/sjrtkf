@@ -1,6 +1,6 @@
 'use strict';
 const {test}=require('node:test'),assert=require('node:assert/strict');
-const {parseMetadata,enrich}=require('../src/metadata');
+const {parseMetadata,parseSeatLabels,enrich}=require('../src/metadata');
 const {rankGroups}=require('../src/preferences');
 function seat(id,rowNo,rowIdx,colIdx,extra={}){
   return {seatInfoId:id,rowNo,rowIdx,colIdx,seatNo:String(colIdx+1),seatGrade:'W',isExposable:true,seatGroupId:null,...extra};
@@ -22,7 +22,7 @@ test('A through Z use one-based ordinals and optional Korean row suffix without 
   const rows=read(labels.map((label,i)=>seat('row'+i,label+(i%2?'열':''),i,0)));
   assert.deepEqual(rows.map(s=>s.row),Array.from({length:26},(_,i)=>i+1));
   assert.deepEqual(rows.map(s=>s.rowLabel),labels);
-  const groups=rankGroups(rows,{quantity:1,tiers:[{minRow:21,maxRow:26}]});
+  const groups=rankGroups(rows,{quantity:1,tiers:[{minRow:21,maxRow:26}],fallbackAnywhere:false});
   assert.deepEqual(groups.map(g=>g.seats[0].rowLabel),['U','V','W','X','Y','Z']);
 });
 test('unknown or mixed label formats remain ineligible instead of being guessed',()=>{
@@ -63,8 +63,8 @@ test('existing numeric rows and legacy metadata keep their previous ranking and 
   const legacy=enrich([{id:'legacy',available:true}],new Map([['legacy',{row:3,number:7,block:'1',grade:'일반',exposable:true,grouped:false}]]));
   assert.equal(legacy[0].label,'일반 · 1블럭 3열 7번');
 });
-test('the metadata parser remains self-contained when serialized for the Chrome extension',()=>{
-  const vm=require('node:vm'),parse=vm.runInNewContext('('+parseMetadata.toString()+')');
+test('the metadata parser uses the shared label helper when serialized for the Chrome extension',()=>{
+  const vm=require('node:vm'),parse=vm.runInNewContext('const parseSeatLabels='+parseSeatLabels.toString()+';('+parseMetadata.toString()+')');
   const result=parse([{blockKey:'W:본부석',seats:[seat('alpha','A',0,0)]}]);
   assert.equal(result[0].row,1);assert.equal(result[0].rowLabel,'A');assert.equal(result[0].rowKind,'alpha');
 });

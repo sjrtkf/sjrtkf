@@ -14,7 +14,7 @@ const safeManualCaptchaImage=value=>typeof value==='string'&&value.length<=3*102
 const manualCaptchaKey=()=>manualCaptchaState.present&&manualCaptchaState.supported&&manualCaptchaState.challengeId&&String(manualCaptchaState.targetId)===String(currentTargetId)?String(manualCaptchaState.targetId)+':'+manualCaptchaState.challengeId:null;
 const targetIsGate=()=>/^https:\/\/tickets\.interpark\.com\/gates\/ticket\/\d+(?:[/?#]|$)/.test(currentTargetUrl);
 const targetIsSeat=()=>{try{const url=new URL(currentTargetUrl);return url.origin==='https://tickets.interpark.com'&&url.pathname==='/onestop/seat';}catch{return false;}};
-const lockedIds=['home','postseason','testBears','pageUrl','demo','target','games','game','openAt','restoreOpening','clock','entryStrategy','entryOffsetMs','inspectionOnly','stopAfterCaptcha','excludeRestricted','recordObservation','preflight','start','save','quantity','quantityMinus','quantityPlus','priority','areas','blocks','together','obstructed','autoComplete','autoCaptcha','manualCaptchaAssist','notice','readAreas','addArea','areaChoice','recommend','choose','complete','scan','minus','reset','plus','addTier','refreshPairing','updateExtension','extensionFolder','venueProfile','venueName','createVenue','referenceArea','referenceTarget','addReferenceAreas','catalogTarget','blockChoice','addBlock'];
+const lockedIds=['home','postseason','testBears','pageUrl','demo','target','games','game','openAt','restoreOpening','clock','entryStrategy','entryOffsetMs','inspectionOnly','stopAfterCaptcha','includeRestricted','fallbackAnywhere','recordObservation','preflight','start','save','quantity','quantityMinus','quantityPlus','priority','areas','blocks','together','obstructed','autoComplete','autoCaptcha','manualCaptchaAssist','notice','readAreas','addArea','areaChoice','recommend','choose','complete','scan','minus','reset','plus','addTier','refreshPairing','updateExtension','extensionFolder','venueProfile','venueName','createVenue','referenceArea','referenceTarget','addReferenceAreas','catalogTarget','blockChoice','addBlock'];
 const browserIds=['recordObservation','home','postseason','testBears','demo','target','games','game','start','readAreas','recommend','choose','complete','scan','minus','reset','plus','focus','code','submitCode'];
 const tierValue=(node,name)=>node.querySelector('[data-field="'+name+'"]');
 function showStep(step,{focus=false}={}){
@@ -36,16 +36,20 @@ function updateOverview(){
   $('runVenueSummary').textContent=profile?.name||'기존 공통 설정';
   $('runModeSummary').textContent=inspectionOnly?'진입 확인만 · 좌석 선택 없이 정지':p.stopAfterCaptcha?'보안문자 확인 후 기록·정지':'자동 진행 · 좌석 조건 적용';
   const scopeStart=targetIsSeat()?'현재 좌석 화면':'예매창 진입';
-  $('runScope').textContent=inspectionOnly?scopeStart+' → 정지. 좌석 선택과 선택 완료는 실행하지 않습니다.':p.stopAfterCaptcha?scopeStart+' → 보안문자 확인 → 정보 기록 → 정지.':p.autoComplete?scopeStart+' → 좌석 조건 확인·선택 → 성인 수량 선택 → N매 예매하기 → 다음 화면 확인. 결제는 직접 진행합니다.':scopeStart+' → 좌석 조건 확인·선택 → 정지. ‘선택 완료’가 꺼져 있어 다음 화면으로 자동 이동하지 않습니다.';
+  $('runScope').textContent=inspectionOnly?scopeStart+' → 정지. 좌석 선택과 선택 완료는 실행하지 않습니다.':p.stopAfterCaptcha?scopeStart+' → 보안문자 확인 → 정보 기록 → 정지.':p.autoComplete?scopeStart+' → 좌석 조건 확인·선택 → 일반 가격 수량 선택 → N매 예매하기 → 다음 화면 확인. 결제는 직접 진행합니다.':scopeStart+' → 좌석 조건 확인·선택 → 정지. ‘선택 완료’가 꺼져 있어 다음 화면으로 자동 이동하지 않습니다.';
   $('runScope').dataset.level=inspectionOnly||p.stopAfterCaptcha||!p.autoComplete?'warning':'ok';
   const quantity=Number.isInteger(p.quantity)&&p.quantity>=1&&p.quantity<=4?p.quantity+'석':'좌석 수 확인 필요';
-  const seatSummary=[quantity,p.requireTogether?'연석 필수':'떨어진 좌석도 허용',p.excludeObstructed?'시야방해석 제외':'시야방해석 허용'].join(' · ');
-  const priority=()=> '통로 거리 → 앞열';
-  const conditionSummary=p.tiers.length?p.tiers.map((t,i)=>{
+  const seatSummary=[quantity,p.requireTogether?'연석 필수':'떨어진 좌석도 허용',p.excludeObstructed?'시야방해석 제외':'시야방해석 허용',p.excludeRestricted?'장애인·휠체어석 제외':'장애인·휠체어석 포함'].join(' · ');
+  const priority=()=> '3루·중앙 → 가까운 구역 표기 → 앞열 → 통로 거리';
+  const limited=t=>Boolean(t.areas.trim()||t.blocks.trim()||t.minRow||t.maxRow);
+  const hasScope=p.tiers.length?p.tiers.every(limited):Boolean(p.areas.trim()||p.blocks.trim());
+  const preferredSummary=p.tiers.length?p.tiers.map((t,i)=>{
     const areas=t.areas.trim()||'전체 구역',blocks=t.blocks.trim()?'블럭 '+t.blocks.trim():'';
     const rows=t.minRow||t.maxRow?(t.minRow||'1')+'~'+(t.maxRow||'끝')+'열':'열 제한 없음';
     return [(i+1)+'순위 '+(t.name||''),areas,blocks,rows,priority()].filter(Boolean).join(' · ');
-  }).join('\n'):'기본 조건 · '+priority(p.priority)+'\n'+(p.areas.trim()?p.areas.trim().split('\n').join(' → '):'전체 구역')+(p.blocks.trim()?' · 블럭 '+p.blocks.trim():'');
+  }).join('\n'):(hasScope?'우선 구역 · ':'전체 구역 · ')+priority()+(hasScope?'\n'+(p.areas.trim()?p.areas.trim().split('\n').join(' · '):'전체 구역')+(p.blocks.trim()?' · 블럭 '+p.blocks.trim():''):'');
+  const conditionSummary=preferredSummary+(hasScope?'\n'+(p.fallbackAnywhere?'자리 없으면 전체 구역에서 계속 찾기':'설정한 구역·블록·열 안에서만 찾기'):'')+(!p.requireTogether?'\n여러 구역·등급 합산 · 높은 순위 좌석을 최대한 포함하고 부족한 수만 다음 순위에서 채우기':'');
+  $('restrictedHint').textContent='해당 좌석의 이용 자격을 확인한 경우에만 포함하세요. ‘104블록 W4-1’ 같은 특수 표기의 확인된 1인석은 1매만 지원하며, 숫자 열 범위가 있는 순위에서는 제외됩니다.'+(!p.excludeRestricted&&p.quantity>1?' 현재 매수로는 이 형식의 좌석을 선택하지 않습니다.':'');
   for(const id of ['seatSummary','runSeatSummary'])$(id).textContent=seatSummary;
   for(const id of ['conditionSummary','runConditionSummary'])$(id).textContent=conditionSummary;
   $('saveBadge').textContent=dirty?'변경됨 · 미저장':'저장됨';$('saveBadge').classList.toggle('unsaved',dirty);$('dirtyBadge').hidden=!dirty;
@@ -144,7 +148,7 @@ function lockControls(){
   }
   for(const id of ['areas','blocks','priority'])$(id).disabled=busy||enabledTiers>0;
   $('legacyPrefs').classList.toggle('legacy-off',enabledTiers>0);
-  $('tierMode').textContent=enabledTiers?'사용한 조건 묶음을 위에서부터 적용합니다. 같은 묶음 안의 구역·블럭은 동등한 허용 범위입니다.':'조건 묶음을 사용하지 않으면 아래의 기본 허용 구역·블록를 적용합니다.';
+  $('tierMode').textContent=enabledTiers?'사용한 조건 묶음을 위에서부터 적용합니다. 같은 묶음 안에서는 기본 선호 순서로 고릅니다.':'조건 묶음을 사용하지 않으면 아래의 기본 우선 구역·블록부터 찾습니다.';
   for(const button of $('seats').querySelectorAll('button'))button.disabled=busy||browserConnected===false;
   for(const button of $('seatingGuides').querySelectorAll('button'))button.disabled=busy;
   const previousReferenceTarget=$('referenceTarget').value;
@@ -175,17 +179,17 @@ function addTier(tier={},enabled=false){
   field('areas','허용 구역 (쉼표로 구분)','text',(tier.areas||[]).join(', ')).placeholder='빈칸: 전체 구역';
   field('blocks','허용 블럭 (쉼표로 구분)','text',(tier.blocks||[]).join(', ')).placeholder='예: 118, 117 · 빈칸: 전체';
   const min=field('minRow','시작 열','number',tier.minRow),max=field('maxRow','마지막 열','number',tier.maxRow),range=document.createElement('div');range.className='row-range';range.append(min.parentElement,max.parentElement);node.append(range);
-  const hint=document.createElement('p');hint.textContent='통로 거리 → 앞열 순으로 고릅니다. 통로석이 없어도 가까운 좌석을 계속 찾습니다.';node.append(hint);
+  const hint=document.createElement('p');hint.textContent='같은 묶음에서는 3루·중앙 → 가까운 구역 표기 → 앞열 → 통로 거리 순으로 고릅니다.';node.append(hint);
   $('tiers').append(node);lockControls();
 }
 function readPrefs(){
   const tiers=[...$('tiers').children].filter(node=>tierValue(node,'enabled').checked).map(node=>Object.fromEntries(['name','areas','blocks','minRow','maxRow'].map(name=>[name,tierValue(node,name).value])));
-  return {quantity:Number($('quantity').value),priority:'aisle',areas:$('areas').value,blocks:$('blocks').value,tiers,requireTogether:$('together').checked,excludeObstructed:$('obstructed').checked,autoComplete:$('autoComplete').checked,autoNotice:$('notice').checked,manualCaptchaAssist:false,autoCaptcha:true,stopAfterCaptcha:$('stopAfterCaptcha').checked,selectionMethod:$('selectionMethod').value,excludeRestricted:$('excludeRestricted').checked};
+  return {quantity:Number($('quantity').value),priority:'front',areas:$('areas').value,blocks:$('blocks').value,tiers,requireTogether:$('together').checked,excludeObstructed:$('obstructed').checked,autoComplete:$('autoComplete').checked,autoNotice:$('notice').checked,manualCaptchaAssist:false,autoCaptcha:true,stopAfterCaptcha:$('stopAfterCaptcha').checked,selectionMethod:$('selectionMethod').value,excludeRestricted:!$('includeRestricted').checked,fallbackAnywhere:$('fallbackAnywhere').checked};
 }
 function showPrefs(p){
-  $('quantity').value=p.quantity;$('priority').value='aisle';$('areas').value=p.areas.join('\n');$('blocks').value=p.blocks.join(', ');$('together').checked=p.requireTogether;$('obstructed').checked=p.excludeObstructed;$('autoComplete').checked=p.autoComplete;$('notice').checked=p.autoNotice;
+  $('quantity').value=p.quantity;$('priority').value='front';$('areas').value=p.areas.join('\n');$('blocks').value=p.blocks.join(', ');$('together').checked=p.requireTogether;$('obstructed').checked=p.excludeObstructed;$('autoComplete').checked=p.autoComplete;$('notice').checked=p.autoNotice;
   $('stopAfterCaptcha').checked=p.stopAfterCaptcha===true;
-  $('excludeRestricted').checked=p.excludeRestricted!==false;$('selectionMethod').value=p.selectionMethod||'click';
+  $('includeRestricted').checked=p.excludeRestricted===false;$('fallbackAnywhere').checked=p.fallbackAnywhere!==false;$('selectionMethod').value=p.selectionMethod||'click';
   $('manualCaptchaAssist').checked=false;
   $('autoCaptcha').checked=true;
   $('tiers').replaceChildren();for(let i=0;i<Math.max(3,p.tiers?.length||0);i++)addTier(p.tiers?.[i]||{},!!p.tiers?.[i]);savedPrefsSnapshot=JSON.stringify(readPrefs());lockControls();
@@ -248,14 +252,14 @@ function showClock(c){
   const measured=Number.isFinite(c.measuredAt)?new Date(c.measuredAt).toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit',second:'2-digit',timeZone:'Asia/Seoul'})+' 측정. ':'';
   $('clockHint').textContent=measured+(c.source==='ticket-server'?'사이트 시계를 읽은 당시의 차이입니다. 시험 방식은 예매 시작이 가까워지면 다시 확인합니다.':'예매 서버 시계를 읽지 못해 일반 웹 응답으로 추정했습니다. 이 값으로 정시 클릭을 예약하지 않습니다.');
 }
-const clockOutcomeLabel=value=>({'not-configured':'사용 안 함','waiting-sync':'시각 확인 중','armed':'예약됨','not-ready':'예정 시각에 준비되지 않음 · 활성화 감지 유지','stale':'시각 정보 만료 · 활성화 감지로 진행','clicked':'함수 실행','fallback':'기본 활성화 감지로 진행'}[value]||'미확인');
+const clockOutcomeLabel=value=>({'not-configured':'사용 안 함','waiting-sync':'시각 확인 중','armed':'예약됨','not-ready':'예정 시각에 준비되지 않음 · 활성화 감지 유지','stale':'시각 정보 만료 · 최근 시각 확인 대기','clicked':'함수 실행','fallback':'기본 활성화 감지로 진행'}[value]||'미확인');
 function showEntryMode(){
   if(targetIsSeat()){$('entryMode').textContent='이미 열린 좌석 화면에서 시작합니다. 시작 버튼을 누르면 현재 화면과 선택 상태부터 확인하며 예매 진입 요청이나 오픈 시각 예약은 실행하지 않습니다.';return;}
   if(running&&currentEntry){
     $('entryMode').textContent=currentEntry.strategy==='clock'?'이번 작업: 서버 시각 + 활성화 감지. '+(currentEntry.clockReason||'사이트 활성화 후 진입 함수를 실행합니다.'):'이번 작업: 사이트 활성화 감지. 사이트가 예매 버튼을 활성화하면 진입 함수를 실행합니다.';
     return;
   }
-  $('entryMode').textContent=targetIsGate()?'현재 준비 화면에서 시작합니다. 공식 시각으로 되돌리기로 포스트시즌 시작 시각을 읽거나 예약 시각을 직접 입력하세요.':$('entryStrategy').value==='clock'?'보정한 예약 시각과 사이트 활성화를 모두 확인하여 진입합니다. 요청이 발생하지 않은 경우만 다시 확인하며, 느린 응답에는 중복 전송하지 않습니다.':'로그인 후 예매 준비 화면에 미리 들어가고, 예매 버튼이 활성화되면 진입 함수를 한 번 실행합니다.';
+  $('entryMode').textContent=targetIsGate()?'현재 준비 화면에서 시작합니다. 공식 시각으로 되돌리기로 포스트시즌 시작 시각을 읽거나 예약 시각을 직접 입력하세요.':$('entryStrategy').value==='clock'?'보정한 예약 시각과 사이트 활성화를 모두 확인하여 진입합니다. 요청이 발생하지 않은 경우만 다시 확인하며, 느린 응답에는 중복 전송하지 않습니다.':'로그인 후 경기 목록에서 시작하면 선택한 예매 버튼의 활성화를 기다립니다. 준비 화면으로 이동하면 해당 화면에서 계속 진행합니다.';
 }
 function currentPreflightFingerprint(){
   return JSON.stringify({preferences:readPrefs(),inspectionOnly:$('inspectionOnly').checked,connected:browserConnected,target:currentTargetId,url:currentTargetUrl,game:$('game').value,openAt:$('openAt').value,strategy:$('entryStrategy').value,offset:$('entryOffsetMs').value});
@@ -307,6 +311,8 @@ function showLastRun(record){
     const outcome=clockOutcomeLabel(entry.clockOutcome);
     const count=n=>Number.isInteger(n)&&n>=0?n:0;
     const lines=['진입 방식: '+(entry.strategy==='current-seat'?'열린 좌석 화면에서 시작 · 새 진입 요청 없음':entry.strategy==='clock'?'서버 시각 + 활성화 감지':'사이트 활성화 감지'),'진입 실행 계기: '+trigger,'서버 시각 예약: '+outcome];
+    if(entry.startPage)lines.push('시작 위치: '+({listing:'경기 목록',gate:'예매 준비 화면',seat:'좌석 화면'}[entry.startPage]||'미확인'));
+    if(entry.listingPhase)lines.push('목록 진입: '+({armed:'활성화 대기',clicked:'함수 실행 확인',blocked:'중단',stopped:'중지',timeout:'시간 초과','transition-unconfirmed':'화면 이동 확인 · 함수 결과 미수신'}[entry.listingPhase]||'미확인'));
     if(entry.clockReason)lines.push(String(entry.clockReason));
     if(Number.isFinite(entry.clockUncertaintyMs))lines.push('시각 추정 불확실성: 약 ±'+Math.ceil(entry.clockUncertaintyMs)+'ms');
     lines.push('진입 요청 관찰 '+count(entry.requestCount)+'건 · 응답 수신 완료 '+count(entry.receivedCount)+'건 · 전송 실패 '+count(entry.failedCount)+'건');
@@ -470,7 +476,7 @@ $('game').onchange=()=>showOpening(gameRows.find(g=>g.key===$('game').value));
 $('restoreOpening').onclick=async()=>{if(targetIsGate()){const r=await exclusive('gateOpening');if(r?.opening)showOpening(r.opening);}else showOpening(gameRows.find(g=>g.key===$('game').value));};
 $('clock').onclick=()=>exclusive('clock');
 $('entryStrategy').onchange=showEntryMode;
-$('excludeRestricted').onchange=updateOverview;$('selectionMethod').onchange=updateOverview;
+$('includeRestricted').onchange=updateOverview;$('fallbackAnywhere').onchange=updateOverview;$('selectionMethod').onchange=updateOverview;
 $('inspectionOnly').onchange=()=>{if($('inspectionOnly').checked)$('stopAfterCaptcha').checked=false;updateOverview();};
 $('stopAfterCaptcha').onchange=()=>{if($('stopAfterCaptcha').checked){$('inspectionOnly').checked=false;$('manualCaptchaAssist').checked=false;$('autoCaptcha').checked=true;}updateOverview();};
 $('runMode').onchange=()=>{const mode=$('runMode').value;$('inspectionOnly').checked=mode==='entry';$('stopAfterCaptcha').checked=mode==='observe';$('autoComplete').checked=mode!=='seat';updateOverview();};

@@ -1,6 +1,6 @@
 {
   "name": "baseball-ticket-helper",
-  "version": "0.9.20",
+  "version": "0.9.25",
   "private": true,
   "description": "일반 Chrome과 연결하는 야구 티켓팅 보조 Windows 패널",
   "main": "src/chrome-main.js",

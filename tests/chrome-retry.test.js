@@ -23,10 +23,15 @@ function setup(options={}){
       if(fn?.name==='readDetails')return {blocks:[],grades:[]};
       if(fn?.name==='scene')return {...scene,...options.scene?.({api,seen,clock})};
       if(fn?.name==='liveRead')return this.readSeats();
+      if(fn?.name==='waitForChange'){
+        const result=await options.waitForChange?.(arg,{api,seen,clock});
+        if(result)return result;
+        clock.now+=arg.timeoutMs;return {changed:false,revision:arg.revision};
+      }
       if(fn?.name==='clickKnown'){assert.equal(arg,'좌석도 전체보기');seen.backs++;options.back?.({api,seen,clock});return true;}
       throw Error('Unexpected browser call: '+(fn?.name||fn));
     }
-    async readSeats(){seen.reads++;return {rows:options.rows?.({api,seen,clock})||[]};}
+    async readSeats(){seen.reads++;return {rows:options.rows?.({api,seen,clock})||[],revision:options.revision?.({api,seen,clock})??null};}
     async seatAction(row,action){assert.equal(action,'click');seen.opened.push(row.name);options.open?.(row,{api,seen,clock});}
   }
   const control={...load('./run-control'),pause:async(ms,signal)=>{
@@ -51,13 +56,113 @@ function setup(options={}){
     // Ranking/retry tests replace the HTTP transaction boundary; http-booking.test
     // executes its real fetch state machine separately.
     runHttpBooking=globalThis.httpFixture;
-    globalThis.api={autoLoop,trackTabs,runs,scopeVersions,command,scheduleGateClock,current,setClock:value=>clockInfo=value,begin:p=>beginRun(current(),p,'auto')};`,context);
+    globalThis.api={autoLoop,trackTabs,onBrowserEvent,metaStores,gradeStores,runs,scopeVersions,command,scheduleGateClock,current,setClock:value=>clockInfo=value,begin:p=>beginRun(current(),p,'auto')};`,context);
   api=context.api;api.trackTabs([{id:1,url:'https://tickets.interpark.com/onestop/seat',documentId:'one'}]);
   return {api,clock,seen,start(p={}){const run=api.begin(p);run.openAt=clock.now;return run;}};
 }
 function pair(row=1,grade='A'){
   return [1,2].map(n=>({kind:'seat',id:grade+'-'+row+'-'+n,available:true,grade,block:'118',row,number:n,colIdx:n,segment:grade+'-'+row,obstructed:false,aisle:n===1,neighbors:[grade+'-'+row+'-'+(n===1?2:1)]}));
 }
+
+test('An expired metadata retry never starves an unvisited grade after a slow overview transition',async()=>{
+  let inMap=false,currentGrade;const grades=[{name:'A',count:1},{name:'B',count:1}];
+  const t=setup({scene:()=>({hasSeats:inMap,grades:inMap?[]:grades}),
+    rows:()=>inMap?[{...pair(1,currentGrade)[0],row:currentGrade==='A'?null:1}]:grades.map(g=>({kind:'grade',...g,available:true})),
+    open:row=>{inMap=true;currentGrade=row.name;},back:({clock})=>{inMap=false;clock.now+=1200;}});
+  assert.equal((await t.api.autoLoop(t.start({quantity:1,areas:['A','B'],fallbackAnywhere:false}))).completed,true);
+  assert.deepEqual(t.seen.opened,['A','B']);assert.equal(t.seen.selections[0][0].seats[0].grade,'B');
+});
+
+test('An adjacent conflict reaches a scattered alternative in the same round',async()=>{
+  const rows=[...pair(1,'A'),pair(3,'A')[0]];
+  const t=setup({rows:()=>rows,select:({groups})=>groups[0].seats.every(s=>s.row===1)?{exhausted:true}:{completed:true}});
+  const run=t.start({quantity:2,requireTogether:false,areas:['A'],fallbackAnywhere:false});
+  assert.equal((await t.api.autoLoop(run)).completed,true);
+  assert.equal(t.seen.selections.length,2);assert.deepEqual(t.seen.selections[1][0].seats.map(s=>s.row),[1,3]);assert.equal(run.retry.cycle,1);assert.equal(t.seen.backs,0);
+});
+test('Changed higher-tier metadata is rechecked before selecting a fresh lower-tier grade',async()=>{
+  let inMap=false,currentGrade,released=false;const grades=[{name:'A',count:2},{name:'B',count:2}];
+  const t=setup({scene:()=>({hasSeats:inMap,grades:inMap?[]:grades}),
+    rows:()=>inMap?pair(1,currentGrade).map(s=>currentGrade==='A'?{...s,number:null}:s):grades.map(g=>({kind:'grade',...g,available:true})),
+    open:row=>{inMap=true;currentGrade=row.name;},back:({api})=>{inMap=false;if(currentGrade==='A'&&!released){released=true;api.onBrowserEvent({type:'metadata',tabId:1,documentId:'one',rows:pair(1,'A').map(s=>({...s,exposable:true,grouped:false}))});}}
+  });
+  const run=t.start({quantity:2,requireTogether:true,tiers:[{areas:['A']},{areas:['B']}],fallbackAnywhere:false});
+  assert.equal((await t.api.autoLoop(run)).completed,true);
+  assert.deepEqual(t.seen.opened,['A','A']);assert.equal(t.seen.selections[0][0].seats[0].grade,'A');
+});
+
+test('Incomplete number metadata retries its grade after one second without a full-round delay',async()=>{
+  let inMap=false;const openedAt=[],grades=[{name:'A',count:1}],key=JSON.stringify([0,'A']);let deadline;
+  const t=setup({scene:()=>({hasSeats:inMap,grades:inMap?[]:grades}),revision:()=>0,
+    rows:()=>inMap?[{...pair()[0],number:openedAt.length===1?null:1,group:'seat_block_001:118'}]:[{kind:'grade',name:'A',count:'1',available:true}],
+    open:(_row,{clock})=>{inMap=true;openedAt.push(clock.now);},back:()=>{inMap=false;},
+    waitForChange:(arg,{api,clock})=>{deadline=api.runs.current.metadataCooldown.get(key);assert.ok(arg.timeoutMs>0&&arg.timeoutMs<=1000);assert.equal(api.runs.current.triedJobs.has(key),true);clock.now+=arg.timeoutMs;return {changed:false};}
+  });
+  const run=t.start({quantity:1,areas:['A'],fallbackAnywhere:false});
+  assert.equal((await t.api.autoLoop(run)).completed,true);
+  assert.deepEqual(t.seen.opened,['A','A']);assert.equal(openedAt[1],deadline);assert.equal(run.retry.cycle,1);
+  assert.ok(!t.seen.pauses.includes(3000));assert.equal(t.seen.calls.filter(c=>c.fn==='readDetails').length,1);
+  assert.equal(t.seen.calls.filter(c=>c.fn==='waitForChange').length,1);
+});
+
+for(const eventKind of ['metadata','grades'])test(`Changed ${eventKind} resumes a cooling grade before its one-second deadline`,async()=>{
+  let inMap=false;const openedAt=[],grades=[{name:'A',count:1}],key=JSON.stringify([0,'A']);let deadline;
+  const seat={...pair()[0],group:'seat_block_001:118',grade:eventKind==='grades'?null:'A',gradeCode:'1',number:eventKind==='metadata'?null:1,exposable:true,grouped:false};
+  const t=setup({scene:()=>({hasSeats:inMap,grades:inMap?[]:grades}),revision:()=>0,
+    rows:()=>inMap?[seat]:[{kind:'grade',name:'A',count:'1',available:true}],
+    open:(_row,{clock})=>{inMap=true;openedAt.push(clock.now);},back:()=>{inMap=false;},
+    waitForChange:(_arg,{api,clock})=>{
+      deadline=api.runs.current.metadataCooldown.get(key);
+      api.onBrowserEvent({type:eventKind,tabId:1,documentId:'one',rows:eventKind==='metadata'?[{...seat,number:1}]:[{code:'1',name:'A'}]});
+      assert.equal(api.runs.current.metadataCooldown.get(key),0);assert.equal(api.runs.current.triedJobs.has(key),false);
+      return {changed:true};
+    }
+  });
+  t.api.metaStores.get(1).set(seat.id,{...seat});
+  const run=t.start({quantity:1,areas:['A'],fallbackAnywhere:false});
+  assert.equal((await t.api.autoLoop(run)).completed,true);
+  assert.deepEqual(t.seen.opened,['A','A']);assert.ok(openedAt[1]<deadline);assert.equal(run.retry.cycle,1);
+  assert.equal(t.seen.calls.filter(c=>c.fn==='waitForChange').length,1);
+  assert.ok(!t.seen.pauses.includes(3000));
+});
+
+test('An identical metadata notification cannot reopen a cooling grade before its deadline',async()=>{
+  let inMap=false,waits=0,deadline;const openedAt=[],grades=[{name:'A',count:1}],key=JSON.stringify([0,'A']);
+  const seat={...pair()[0],group:'seat_block_001:118',number:null,exposable:true,grouped:false};
+  const t=setup({scene:()=>({hasSeats:inMap,grades:inMap?[]:grades}),revision:()=>0,
+    rows:()=>inMap?[openedAt.length>1?{...seat,number:1}:seat]:[{kind:'grade',name:'A',count:'1',available:true}],
+    open:(_row,{api,clock})=>{inMap=true;openedAt.push(clock.now);if(openedAt.length>1)api.metaStores.get(1).delete(seat.id);},back:()=>{inMap=false;},
+    waitForChange:(arg,{api,clock})=>{
+      waits++;deadline=api.runs.current.metadataCooldown.get(key);
+      if(waits===1){api.onBrowserEvent({type:'metadata',tabId:1,documentId:'one',rows:[{...seat}]});assert.equal(api.runs.current.metadataCooldown.get(key),deadline);assert.equal(api.runs.current.triedJobs.has(key),true);return {changed:true};}
+      clock.now+=arg.timeoutMs;return {changed:false};
+    }
+  });
+  t.api.metaStores.get(1).set(seat.id,{...seat});const run=t.start({quantity:1,areas:['A'],fallbackAnywhere:false});
+  assert.equal((await t.api.autoLoop(run)).completed,true);
+  assert.equal(waits,2);assert.equal(openedAt[1],deadline);assert.deepEqual(t.seen.opened,['A','A']);assert.equal(run.retry.cycle,1);
+});
+
+test('Stopping during metadata change wait cannot reopen the grade or select a seat',async()=>{
+  const key=JSON.stringify([0,'A']);
+  const t=setup({scene:()=>({hasSeats:false,grades:[{name:'A',count:1}]}),revision:()=>0,rows:()=>[{kind:'grade',name:'A',count:'1',available:true}],
+    waitForChange:(_arg,{api})=>{api.runs.cancel();return {changed:true,stopped:true};}
+  });
+  const run=t.start({quantity:1,areas:['A'],fallbackAnywhere:false});run.metadataCooldown=new Map([[key,t.clock.now+1000]]);run.triedJobs.add(key);
+  await assert.rejects(t.api.autoLoop(run),/중지/);assert.equal(t.seen.opened.length,0);assert.equal(t.seen.selections.length,0);
+});
+
+test('An unresolved grade cannot starve a normal exhausted grade in later search rounds',async()=>{
+  let inMap=false,currentGrade;const grades=[{name:'A',count:1},{name:'B',count:1}];
+  const t=setup({scene:()=>({hasSeats:inMap,grades:inMap?[]:grades}),
+    rows:({api})=>inMap?(currentGrade==='A'?[{...pair(1,'A')[0],number:null,group:'seat_block_001:118'}]:api.runs.current.retry.cycle>1?[pair(1,'B')[0]]:[]):grades.map(g=>({kind:'grade',name:g.name,count:'1',available:true})),
+    open:row=>{inMap=true;currentGrade=row.name;},back:()=>{inMap=false;}
+  });
+  const run=t.start({quantity:1,areas:['A','B'],fallbackAnywhere:false});
+  assert.equal((await t.api.autoLoop(run)).completed,true);
+  assert.deepEqual(t.seen.opened,['A','B','A','B']);assert.equal(run.retry.cycle,2);
+  assert.equal(t.seen.selections[0][0].seats[0].grade,'B');
+});
 test('2 seats together with no area restriction advances past isolated seats to the next grade',async()=>{
   let inMap=false,currentGrade;const grades=[{name:'A',count:2},{name:'B',count:2}];
   const t=setup({timeStep:1600,scene:()=>({hasSeats:true,grades:inMap?[]:grades}),
@@ -277,4 +382,64 @@ test('Selection chunks preserve conflict exclusions across 20 failures and allow
   const second=await chooseCandidates(args);assert.equal(second.completed,true);assert.equal(second.attempted,1);assert.equal(selected.length,21);assert.equal(new Set(selected).size,21);
 });
 
-test('unmatched area configuration stops with a correction message instead of infinite cycling',async()=>{const t=setup({scene:()=>({hasSeats:false,grades:[{name:'블루존',count:20}]}),rows:()=>[]});await assert.rejects(t.api.autoLoop(t.start({areas:['블루존 오타']})),/현재 경기 목록에 없습니다/);assert.equal(t.seen.opened.length,0);});
+test('unmatched area configuration stops when whole-venue fallback is explicitly disabled',async()=>{const t=setup({scene:()=>({hasSeats:false,grades:[{name:'블루존',count:20}]}),rows:()=>[]});await assert.rejects(t.api.autoLoop(t.start({areas:['블루존 오타'],fallbackAnywhere:false})),/현재 경기 목록에 없습니다/);assert.equal(t.seen.opened.length,0);});
+
+test('configured priorities are exhausted before another area is selected through whole-venue fallback',async()=>{
+  let inMap=false,currentGrade;const grades=[{name:'3루 내야석',count:2},{name:'A',count:2},{name:'B',count:2}];
+  const t=setup({timeStep:1600,scene:()=>({hasSeats:inMap,grades:inMap?[]:grades}),
+    rows:()=>inMap?(currentGrade==='3루 내야석'?pair(2,currentGrade):[pair(1,currentGrade)[0],pair(2,currentGrade)[0]]):grades.map(g=>({kind:'grade',name:g.name,count:'2',available:true})),
+    open:row=>{inMap=true;currentGrade=row.name;},back:()=>{inMap=false;}});
+  const run=t.start({quantity:2,tiers:[{name:'먼저 A',areas:['A']},{name:'다음 B',areas:['B']}],fallbackAnywhere:true});
+  assert.equal((await t.api.autoLoop(run)).completed,true);
+  assert.deepEqual(t.seen.opened,['A','B','3루 내야석']);assert.equal(run.retry.cycle,1);
+  assert.equal(t.seen.selections[0][0].seats[0].grade,'3루 내야석');
+});
+
+test('a missing priority area continues to available areas when fallback is enabled',async()=>{
+  let inMap=false;const grade={name:'3루 내야석',count:2};
+  const t=setup({scene:()=>({hasSeats:inMap,grades:inMap?[]:[grade]}),rows:()=>inMap?pair(1,grade.name):[{kind:'grade',name:grade.name,available:true}],open:()=>{inMap=true;}});
+  assert.equal((await t.api.autoLoop(t.start({areas:['이전 경기 구역'],fallbackAnywhere:true}))).completed,true);
+  assert.deepEqual(t.seen.opened,[grade.name]);
+});
+
+test('with no priorities the restricted-seat option controls whether remaining wheelchair inventory is searched',async()=>{
+  for(const includeRestricted of [false,true]){
+    let inMap=false;const restricted='3루 K5 휠체어장애인석',grades=[{name:'일반석',count:0},{name:restricted,count:1}];
+    const t=setup({scene:()=>({hasSeats:inMap,grades:inMap?[]:grades}),rows:()=>inMap?[pair(1,restricted)[0]]:grades.map(g=>({kind:'grade',name:g.name,available:g.count>0})),open:()=>{inMap=true;},pause:({api,ms})=>{if(!includeRestricted&&ms===3000)api.runs.cancel();}});
+    const run=t.start({quantity:1,requireTogether:false,areas:[],tiers:[],excludeRestricted:!includeRestricted});
+    if(includeRestricted){assert.equal((await t.api.autoLoop(run)).completed,true);assert.deepEqual(t.seen.opened,[restricted]);assert.equal(t.seen.selections[0][0].seats[0].grade,restricted);}
+    else{await assert.rejects(t.api.autoLoop(run),/중지/);assert.deepEqual(t.seen.opened,[]);assert.equal(t.seen.selections.length,0);}
+  }
+});
+
+test('turning whole-venue fallback off leaves lower-priority areas untouched',async()=>{
+  let inMap=false;const grades=[{name:'A',count:2},{name:'3루 내야석',count:2}];
+  const t=setup({timeStep:1600,scene:()=>({hasSeats:inMap,grades:inMap?[]:grades}),rows:()=>inMap?[]:grades.map(g=>({kind:'grade',name:g.name,available:true})),open:()=>{inMap=true;},back:()=>{inMap=false;},pause:({api,ms})=>{if(ms===3000)api.runs.cancel();}});
+  await assert.rejects(t.api.autoLoop(t.start({areas:['A'],fallbackAnywhere:false})),/중지/);
+  assert.deepEqual(t.seen.opened,['A']);assert.equal(t.seen.selections.length,0);
+});
+
+for(const fallback of [true,false])test(`starting on a lower-priority map opens the overview before accepting it (fallback ${fallback})`,async()=>{
+  let inMap=true,currentGrade='B';const grades=[{name:'A',count:2},{name:'B',count:2}];
+  const t=setup({scene:()=>({hasSeats:inMap,grades:inMap?[]:grades}),rows:()=>inMap?pair(1,currentGrade):grades.map(g=>({kind:'grade',name:g.name,available:true})),open:row=>{inMap=true;currentGrade=row.name;},back:()=>{inMap=false;}});
+  const preferences=fallback?{areas:['A'],fallbackAnywhere:true}:{tiers:[{areas:['A']},{areas:['B']}],fallbackAnywhere:false};
+  assert.equal((await t.api.autoLoop(t.start(preferences))).completed,true);
+  assert.equal(t.seen.backs,1);assert.deepEqual(t.seen.opened,['A']);assert.equal(t.seen.selections[0][0].seats[0].grade,'A');
+});
+
+test('lower-tier map selection stops when the earlier priorities cannot be checked from this screen',async()=>{
+  const t=setup({scene:()=>({hasSeats:true,grades:[],buttons:[]}),rows:()=>pair(1,'B')});
+  await assert.rejects(t.api.autoLoop(t.start({areas:['A'],fallbackAnywhere:true})),/앞선 우선순위/);
+  assert.equal(t.seen.selections.length,0);assert.equal(t.seen.backs,0);
+});
+
+for(const fallback of [true,false])test(`a conflict on a mixed initial map checks other top-priority areas before a lower tier (fallback ${fallback})`,async()=>{
+  let inMap=true,currentGrade=null;const attempts=[],grades=[{name:'A',count:2},{name:'C',count:2},{name:'B',count:2}];
+  const t=setup({timeStep:1600,scene:()=>({hasSeats:inMap,grades:inMap?[]:grades}),
+    rows:()=>inMap?(currentGrade?pair(1,currentGrade):[...pair(1,'A'),...pair(1,'B')]):grades.map(g=>({kind:'grade',name:g.name,available:true})),
+    open:row=>{inMap=true;currentGrade=row.name;},back:()=>{inMap=false;},
+    select:({groups})=>{const grade=groups[0].seats[0].grade;attempts.push(grade);return grade==='A'?{exhausted:true,attempted:1}:{completed:true,attempted:1};}});
+  const preferences=fallback?{areas:['A','C'],fallbackAnywhere:true}:{tiers:[{areas:['A','C']},{areas:['B']}],fallbackAnywhere:false};
+  assert.equal((await t.api.autoLoop(t.start(preferences))).completed,true);
+  assert.deepEqual(attempts,['A','C']);assert.ok(t.seen.backs>=1);assert.deepEqual(t.seen.opened,['A','C']);
+});

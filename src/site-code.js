@@ -28,7 +28,7 @@ function invokeSiteFunction(element,kind='activate',value){
 }
 
 const CODE_ACTIONS=new Set([
-  'entry.prepareEntry','entry.gateStatus','entry.armGate','entry.setGateClock','entry.noteGateRequest',
+  'entry.prepareEntry','entry.armListing','entry.setListingClock','entry.listingState','entry.stopListing','entry.gateStatus','entry.armGate','entry.setGateClock','entry.noteGateRequest',
   'live.liveAction','flow.scene','flow.clickKnown','flow.enterCode','flow.deselect','flow.dismissConflict','flow.dismissEmptySelection',
   'pricePage.adultPriceStep','pricePage.proceedBooking','pricePage.returnToSeats',
   'captcha.captchaSnapshot','captcha.captchaSubmit','captcha.captchaStatus','captcha.captchaCancel','captcha.captchaRefresh',

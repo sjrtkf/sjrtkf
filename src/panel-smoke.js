@@ -19,7 +19,7 @@ module.exports=async function panelSmoke({app,win,bridge,command}){
   const check=(name,body)=>{body();report.checks.push(name);};
   const read=()=>evaluate(`({
     title:document.title,text:document.body.textContent,
-    disabled:Object.fromEntries(['home','testBears','demo','target','games','game','openAt','entryStrategy','entryOffsetMs','start','preflight','readAreas','recommend','choose','complete','scan','minus','reset','plus','focus','code','submitCode','save','quantity','clock','stop','captchaRead','captchaSubmit','captchaStop','captchaTarget','autoCaptcha','manualCaptchaAssist','manualCaptchaPrepare','manualCaptchaSubmit','manualCaptchaText','manualCaptchaFocus'].map(id=>[id,document.getElementById(id).disabled])),
+    disabled:Object.fromEntries(['home','testBears','demo','target','games','game','openAt','entryStrategy','entryOffsetMs','start','preflight','readAreas','recommend','choose','complete','scan','minus','reset','plus','focus','code','submitCode','save','quantity','includeRestricted','fallbackAnywhere','clock','stop','captchaRead','captchaSubmit','captchaStop','captchaTarget','autoCaptcha','manualCaptchaAssist','manualCaptchaPrepare','manualCaptchaSubmit','manualCaptchaText','manualCaptchaFocus'].map(id=>[id,document.getElementById(id).disabled])),
     badge:document.getElementById('browserBadge').textContent,helpOpen:document.getElementById('connectionHelp').open,
     clock:document.getElementById('clockInfo').textContent,clockHint:document.getElementById('clockHint').textContent,
     official:document.getElementById('official').textContent,url:document.getElementById('pageUrl').value,
@@ -31,6 +31,7 @@ module.exports=async function panelSmoke({app,win,bridge,command}){
     dirtyHidden:document.getElementById('dirtyBadge').hidden,
     seatSummary:document.getElementById('seatSummary').textContent,
     conditionSummary:document.getElementById('conditionSummary').textContent,
+    includeRestricted:document.getElementById('includeRestricted').checked,fallbackAnywhere:document.getElementById('fallbackAnywhere').checked,
     nextTitle:document.getElementById('nextTitle').textContent,
     venue:document.getElementById('venueProfile').value,venueCount:document.getElementById('venueProfile').options.length,
     venueName:document.getElementById('runVenueSummary').textContent,
@@ -85,11 +86,24 @@ module.exports=async function panelSmoke({app,win,bridge,command}){
       assert.match(ui.clockHint,/오류가 아닙니다/);assert.match(ui.text,/경기 시작 시각과는 달라요/);
       assert.match(ui.official,/경기를 선택/);
     });
+    check('실행 범위는 일반 가격 선택과 적용 조건을 표시',()=>{
+      assert.match(ui.text,/좌석·일반 가격 선택 후 예매하기까지/);assert.match(ui.text,/조건을 충족하는 첫 일반 가격/);
+      assert.doesNotMatch(ui.text,/좌석·성인 가격 선택/);
+    });
     ui=await publish(fixture());
     check('Chrome 미연결 시 예매 동작 잠금 · 설정과 저장은 사용 가능',()=>{
       for(const id of ['home','testBears','demo','target','games','game','start','readAreas','recommend','choose','complete','scan','minus','reset','plus','focus','code','submitCode'])assert.equal(ui.disabled[id],true,id);
       for(const id of ['save','quantity','clock','stop'])assert.equal(ui.disabled[id],false,id);
       assert.ok(ui.tiers>=3);assert.equal(ui.badge,'연결 전');
+    });
+    check('기본값은 전체 구역 탐색 · 장애인·휠체어석 제외 · 실제 거리 보장 없이 선호 표시',()=>{
+      assert.equal(ui.fallbackAnywhere,true);assert.equal(ui.includeRestricted,false);
+      assert.equal(ui.disabled.fallbackAnywhere,false);assert.equal(ui.disabled.includeRestricted,false);
+      assert.match(ui.seatSummary,/장애인·휠체어석 제외/);assert.match(ui.conditionSummary,/전체 구역/);
+      assert.match(ui.conditionSummary,/3루·중앙 → 가까운 구역 표기 → 앞열 → 통로 거리/);
+      assert.match(ui.text,/해당 좌석의 이용 자격을 확인한 경우에만 포함/);
+      assert.match(ui.text,/매수·연석·시야방해석 및 장애인·휠체어석 설정은 유지/);
+      assert.match(ui.text,/실제 거리와 통로 여부를 보장하지 않습니다/);
     });
     await evaluate("document.getElementById('nextAction').click()");
     ui=await read();
@@ -112,6 +126,28 @@ module.exports=async function panelSmoke({app,win,bridge,command}){
     check('연결 전에도 패널의 선호 조건 저장 동작',()=>assert.equal(saved.quantity,3));
     ui=await read();
     check('저장 성공 후 미저장 표시 해제',()=>assert.equal(ui.dirtyHidden,true));
+    await evaluate("(async()=>{document.getElementById('fallbackAnywhere').checked=false;document.getElementById('includeRestricted').checked=true;document.getElementById('areas').value='3루 내야석';await document.getElementById('save').onclick();})()");
+    const savedOptions=JSON.parse(fs.readFileSync(path.join(app.getPath('userData'),'preferences.json'),'utf8'));
+    await evaluate(`showPrefs(${JSON.stringify(savedOptions)});`);ui=await read();
+    check('전체 구역 찾기 해제·장애인석 포함을 실제 저장하고 다시 읽어 복원',()=>{
+      assert.equal(savedOptions.fallbackAnywhere,false);assert.equal(savedOptions.excludeRestricted,false);assert.equal(savedOptions.priority,'front');
+      assert.equal(ui.fallbackAnywhere,false);assert.equal(ui.includeRestricted,true);assert.equal(ui.dirtyHidden,true);
+      assert.match(ui.seatSummary,/장애인·휠체어석 포함/);assert.match(ui.conditionSummary,/설정한 구역·블록·열 안에서만 찾기/);
+    });
+    await evaluate("(async()=>{document.getElementById('fallbackAnywhere').checked=true;document.getElementById('includeRestricted').checked=false;document.getElementById('fallbackAnywhere').onchange();await document.getElementById('save').onclick();})()");
+    const savedDefaults=JSON.parse(fs.readFileSync(path.join(app.getPath('userData'),'preferences.json'),'utf8'));
+    await evaluate(`showPrefs(${JSON.stringify(savedDefaults)});`);ui=await read();
+    check('전체 구역 대안 재활성화·장애인석 제외를 저장하고 실행 요약에도 반영',()=>{
+      assert.equal(savedDefaults.fallbackAnywhere,true);assert.equal(savedDefaults.excludeRestricted,true);
+      assert.equal(ui.fallbackAnywhere,true);assert.equal(ui.includeRestricted,false);
+      assert.match(ui.conditionSummary,/자리 없으면 전체 구역에서 계속 찾기/);assert.match(ui.seatSummary,/장애인·휠체어석 제외/);
+    });
+    await evaluate("document.getElementById('together').checked=false;document.getElementById('includeRestricted').checked=true;updateOverview();");ui=await read();
+    check('분산 좌석의 구역 합산과 우선순위 채우기 · 특수 장애인석 1매 제한 안내',()=>{
+      assert.match(ui.seatSummary,/떨어진 좌석도 허용/);assert.match(ui.conditionSummary,/여러 구역·등급 합산/);
+      assert.match(ui.conditionSummary,/부족한 수만 다음 순위/);assert.match(ui.text,/1매만 지원/);assert.match(ui.text,/현재 매수로는 이 형식의 좌석을 선택하지 않습니다/);
+    });
+    await evaluate(`(async()=>{showPrefs(${JSON.stringify(saved)});await document.getElementById('save').onclick();})()`);
     await evaluate("(async()=>{document.getElementById('venueProfile').value='lions-park';await document.getElementById('venueProfile').onchange();})()");
     ui=await read();
     check('예매 전 구장 선택 · 기존 조건 자동 보존 · 라이온즈파크 과거 자료는 선택 전 미적용',()=>{
@@ -235,6 +271,7 @@ module.exports=async function panelSmoke({app,win,bridge,command}){
       for(const id of ['focus','code','stop'])assert.equal(ui.disabled[id],false,id);assert.equal(ui.disabled.submitCode,true);
       assert.equal(ui.quickStopHidden,true);
       assert.ok(ui.profileControlsDisabled.every(Boolean),'구장 변경·참고 적용·진입 설정도 실행 중 잠금');
+      assert.equal(ui.disabled.fallbackAnywhere,true);assert.equal(ui.disabled.includeRestricted,true);
       assert.deepEqual(ui.shownPanels,['run']);assert.equal(ui.dockVisible,true);
       for(const id of ['captchaRead','captchaSubmit','captchaTarget','autoCaptcha'])assert.equal(ui.disabled[id],true,id);
     });
@@ -331,13 +368,15 @@ module.exports=async function panelSmoke({app,win,bridge,command}){
     await evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
     fs.writeFileSync(path.join(output,'preview-'+versionTag+'-page.png'),(await win.webContents.capturePage()).toPNG());
     await evaluate(`showPrefs({quantity:2,requireTogether:true,excludeObstructed:true,areas:[],blocks:[],tiers:[],autoComplete:true,autoNotice:true});showStep('prefs');
-      currentCatalog={title:'현재 테스트 경기',message:'현재 경기에서 읽은 목록',areas:[{name:'블루존',code:'B'},{name:'테이블석',code:'T'}],blocks:[{code:'001:3-5',name:'3-5',areas:['블루존']},{code:'002:1-1',name:'1-1',areas:['테이블석']}],seats:[{id:'seat_block_fixture:12345',block:'001:3-5',area:'블루존',row:'13열',number:1}]};renderCatalog();
+      currentCatalog={title:'현재 테스트 경기',message:'현재 경기에서 읽은 목록',areas:[{name:'블루존',code:'B'},{name:'테이블석',code:'T'}],blocks:[{code:'001:3-5',name:'3-5',areas:['블루존']},{code:'002:1-1',name:'1-1',areas:['테이블석']}],seats:[{id:'seat_block_fixture:12345',block:'001:3-5',area:'블루존',row:'13열',number:1},{id:'seat_block_fixture:12346',block:'001:3-5',area:'블루존',row:'104블록',number:'W4-1'}]};renderCatalog();
       document.getElementById('areaChoice').options[0].selected=true;renderCatalogBlocks();document.getElementById('addArea').click();`);
     const catalogArea=await evaluate("({prefs:readPrefs(),blocks:[...document.getElementById('blockChoice').options].map(o=>o.value),label:document.getElementById('areaChoice').options[0].textContent})");
     check('현재 경기 목록에서 이름·코드 확인 후 구역만 추가하면 블록 제한 없음',()=>{assert.equal(catalogArea.prefs.areas,'블루존');assert.equal(catalogArea.prefs.blocks,'');assert.deepEqual(catalogArea.blocks,['001:3-5']);assert.match(catalogArea.label,/코드 B/);});
+    const catalogLabels=await evaluate("document.getElementById('catalogSeats').textContent");
+    check('좌석 코드 목록은 특수 좌석의 블록·W번호 원문을 표시',()=>assert.match(catalogLabels,/104블록 · W4-1번/));
     await evaluate("document.getElementById('blockChoice').options[0].selected=true;document.getElementById('addBlock').click();");
-    check('구역에 속한 블록 코드 추가 및 고정 통로 순위 표시',()=>{});
-    assert.equal((await evaluate('readPrefs()')).blocks,'001:3-5');assert.equal((await evaluate('readPrefs()')).priority,'aisle');
+    check('구역에 속한 블록 코드 추가 및 앞열 선호 설정 전달',()=>{});
+    assert.equal((await evaluate('readPrefs()')).blocks,'001:3-5');assert.equal((await evaluate('readPrefs()')).priority,'front');
     await evaluate("addTier({name:'대안'},true);document.getElementById('catalogTarget').value='3';document.getElementById('addBlock').click();");
     assert.deepEqual((await evaluate('readPrefs()')).tiers.map(t=>[t.areas,t.blocks]),[['블루존','001:3-5']]);
     check('선택한 구역·블록을 지정한 조건 묶음에 추가',()=>{});
@@ -349,11 +388,15 @@ module.exports=async function panelSmoke({app,win,bridge,command}){
     fs.writeFileSync(path.join(output,'preview-'+versionTag+'-prefs.png'),(await win.webContents.capturePage()).toPNG());
     ui=await read();
     check('설정한 조건 묶음·열 범위·통로 요약 표시',()=>{
-      assert.match(ui.conditionSummary,/1순위 앞열 통로/);assert.match(ui.conditionSummary,/1~5열/);assert.match(ui.conditionSummary,/통로 거리 → 앞열/);
+      assert.match(ui.conditionSummary,/1순위 앞열 통로/);assert.match(ui.conditionSummary,/1~5열/);assert.match(ui.conditionSummary,/앞열 → 통로 거리/);
+      assert.match(ui.conditionSummary,/자리 없으면 전체 구역에서 계속 찾기/);
       assert.match(ui.text,/A=1, B=2, …, Z=26/);
     });
+    await evaluate("document.getElementById('includeRestricted').scrollIntoView({block:'center'});");
+    await evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+    fs.writeFileSync(path.join(output,'preview-'+versionTag+'-seat-options.png'),(await win.webContents.capturePage()).toPNG());
     win.setSize(360,600);
-    await evaluate("document.getElementById('priorityDetails').open=true");
+    await evaluate("document.getElementById('priorityDetails').open=true;document.getElementById('fallbackHint').scrollIntoView({block:'center'});");
     await evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
     ui=await read();
     check('최소 창 크기에서 상세 조건 가로 넘침 없음 · 실행 버튼 표시',()=>{assert.equal(ui.horizontalOverflow,false);assert.equal(ui.dockVisible,true);});

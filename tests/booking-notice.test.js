@@ -1,14 +1,14 @@
 'use strict';
 const {test}=require('node:test'),assert=require('node:assert/strict'),vm=require('node:vm');
 const flow=require('../src/flow'),entry=require('../src/entry');
-function fixture({notice=true,heading='예매 안내',body='N석 응원석 / 테이블석 / 데크존 / 원정석 예매 유의사항',label='확인하고 예매하기',input=false,modal=true}={}){
+function fixture({notice=true,heading='예매 안내',headingTag='h2',body='N석 응원석 / 테이블석 / 데크존 / 원정석 예매 유의사항',label='확인하고 예매하기',input=false,modal=true}={}){
   let clicks=0,gateClicks=0,observer;const size=()=>({width:100,height:40});
   const documentBody={dataset:{}};
   const title={textContent:heading,getBoundingClientRect:size};
   const button={textContent:label,disabled:false,getAttribute:()=>null,getBoundingClientRect:size,click(){clicks++;}};
   const field={getBoundingClientRect:size};
   const container={parentElement:documentBody,textContent:heading+' '+body+' '+label,getBoundingClientRect:size,contains:e=>e===button,querySelector:()=>null,
-    querySelectorAll(selector){if(selector.startsWith('h1,'))return [title];if(selector==='button')return [button];if(selector.startsWith('input,'))return input?[field]:[];return [];}};
+    querySelectorAll(selector){if(selector.startsWith('h1,'))return selector.split(',').includes(headingTag)?[title]:[];if(selector==='button')return [button];if(selector.startsWith('input,'))return input?[field]:[];return [];}};
   button.parentElement=container;
   const gateButton={textContent:'남은시간 00:01',disabled:true,getAttribute:()=>null,getBoundingClientRect:size,click(){gateClicks++;}};
   const main={textContent:'예매 준비가 완료됐어요',querySelectorAll:()=>[gateButton,...(notice?[button]:[])]};
@@ -37,14 +37,49 @@ test('Cancellation deadline notice accepts its booking button and exposes the sa
 });
 
 test('Different ordinary notices can follow immediately in one document, but each is acknowledged only once',()=>{
-  const f=fixture();assert.equal(f.run(flow.clickKnown,'확인하고 예매하기').key,'예매안내');
+  const f=fixture(),firstText=f.container.textContent;assert.equal(f.run(flow.clickKnown,'확인하고 예매하기').key,'예매안내');
   f.title.textContent='취소/환불 안내';f.container.textContent='취소/환불 안내 취소/환불 기간이 지난 예매입니다. 확인하고 예매하기';
   assert.equal(f.run(entry.gateStatus).notice.key,'취소/환불안내');
   assert.equal(f.run(flow.scene).notice.key,'취소/환불안내');
   assert.equal(f.run(flow.clickKnown,'확인하고 예매하기').clicked,true);assert.equal(f.clicks(),2);
   assert.equal(f.run(flow.clickKnown,'확인하고 예매하기').pending,true);assert.equal(f.clicks(),2);
-  f.title.textContent='예매 안내';f.container.textContent='예매 안내 예매 유의사항 확인하고 예매하기';
+  f.title.textContent='예매 안내';f.container.textContent=firstText;
   assert.equal(f.run(flow.clickKnown,'확인하고 예매하기').pending,true);assert.equal(f.clicks(),2);
+});
+
+test('Consecutive booking notices with the same title distinguish seat-view guidance without repeating either notice',()=>{
+  const f=fixture(),firstText=f.container.textContent,first=f.run(flow.clickKnown,'확인하고 예매하기');
+  f.container.textContent='예매 안내 ※ 시야방해석 안내 경기장 구조로 인해 시야 방해가 있을 수 있으며, 이미지 내 별도 표시된 좌석은 시야방해석으로 관람하시기에 불편이 있을 수 있습니다. 취소 기간 이후, 시야 방해로 인한 취소는 불가능하며 세부사항은 예매안내 유의사항을 참고하여 주시기 바랍니다. 확인하고 예매하기';
+  const gateNotice=f.run(entry.gateStatus).notice,seatNotice=f.run(flow.scene).notice;
+  assert.equal(gateNotice.key,'예매안내');assert.equal(seatNotice.key,'예매안내');
+  assert.equal(gateNotice.signature,seatNotice.signature);assert.notEqual(gateNotice.signature,first.signature);
+  const second=f.run(flow.clickKnown,'확인하고 예매하기');
+  assert.equal(second.signature,gateNotice.signature);assert.equal(second.clicked,true);assert.equal(f.clicks(),2);
+  f.container.textContent=f.container.textContent.replaceAll(' ','\n  ');
+  assert.equal(f.run(entry.gateStatus).notice.signature,second.signature);
+  assert.equal(f.run(flow.scene).notice.signature,second.signature);
+  assert.equal(f.run(flow.clickKnown,'확인하고 예매하기').pending,true);assert.equal(f.clicks(),2);
+  f.container.textContent=firstText;
+  assert.equal(f.run(flow.clickKnown,'확인하고 예매하기').pending,true);assert.equal(f.clicks(),2);
+});
+
+test('An exact ordinary title in plain markup is recognized but protected or unknown content remains blocked',()=>{
+  for(const headingTag of ['span','p','strong','b','div']){
+    const f=fixture({headingTag});
+    assert.equal(f.run(entry.gateStatus).notice.key,'예매안내');assert.equal(f.run(flow.scene).notice.key,'예매안내');
+    assert.equal(f.run(flow.clickKnown,'확인하고 예매하기').clicked,true);assert.equal(f.clicks(),1);
+    for(const options of [{heading:'예매 안내와 약관'},{body:'약관 동의가 필요합니다.'},{input:true}]){
+      const blocked=fixture({headingTag,...options});
+      assert.throws(()=>blocked.run(flow.clickKnown,'확인하고 예매하기'),/직접 확인|자동으로 확인하지/);assert.equal(blocked.clicks(),0);
+    }
+  }
+});
+
+test('A title-only latch from an earlier extension keeps its duplicate protection until the notice is absent',()=>{
+  const f=fixture();f.context.window.__bearsBookingNotice={clicked:true,clickedKeys:['예매안내']};
+  assert.equal(f.run(flow.clickKnown,'확인하고 예매하기').pending,true);assert.equal(f.clicks(),0);
+  f.setNotice(false);f.run(flow.scene);f.setNotice(true);
+  assert.equal(f.run(flow.clickKnown,'확인하고 예매하기').clicked,true);assert.equal(f.clicks(),1);
 });
 test('Absent notice returns immediately without timers, clicks, or a missing-button error',()=>{
   const f=fixture({notice:false});f.context.setTimeout=()=>{throw Error('No notice wait should be installed');};

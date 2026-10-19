@@ -82,7 +82,7 @@ test('main: 한 순위의 모든 구역이 끝난 뒤 다음 순위에서 같은
   let inMap=false;const opened=[];
   const grades=[{name:'A',count:2},{name:'B',count:2}];
   const t=setup({advanceMs:1000,maxPauses:20,scene:()=>({hasSeats:inMap,grades:inMap?[]:grades}),rows:()=>inMap?[]:grades.map(g=>({kind:'grade',name:g.name,id:g.name,count:String(g.count),available:true})),onGrade:row=>{opened.push(row.name);inMap=true;},onBack:()=>{inMap=false;}});
-  const run=t.start({tiers:[{name:'앞열',areas:['A','B'],maxRow:5},{name:'뒤열',areas:['A','B'],minRow:6}]});
+  const run=t.start({tiers:[{name:'앞열',areas:['A','B'],maxRow:5},{name:'뒤열',areas:['A','B'],minRow:6}],fallbackAnywhere:false});
   const result=await t.api.autoLoop(run);
   assert.deepEqual(opened,['A','B','A','B']);
   assert.deepEqual([...run.triedJobs],['[0,"A"]','[0,"B"]','[1,"A"]','[1,"B"]']);

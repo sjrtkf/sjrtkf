@@ -13,7 +13,7 @@ function buildCatalog({rows=[],metadata=[],grades=[],title=''}){
     area(name,s.gradeCode);if(!code)continue;
     if(!blocks.has(code))blocks.set(code,{code,name:s.block,areas:[],areaCodes:[],seatCount:0});
     const b=blocks.get(code);if(name&&!b.areas.includes(name))b.areas.push(name);if(s.gradeCode&&!b.areaCodes.includes(s.gradeCode))b.areaCodes.push(s.gradeCode);b.seatCount++;
-    seats.set(s.id,{id:s.id,block:code,area:name,row:s.displayRow||s.rowLabel||s.row,number:s.number,available:available.has(s.id)});
+    seats.set(s.id,{id:s.id,block:code,area:name,row:s.displayRow||s.rawRowLabel||s.rowLabel||s.row,number:s.number??(typeof s.rawSeatNumber==='string'?s.rawSeatNumber.slice(0,80):null),available:available.has(s.id)});
   }
   return {title,areas:[...areas.values()],blocks:[...blocks.values()].sort((a,b)=>a.code.localeCompare(b.code,undefined,{numeric:true})),seats:[...seats.values()],partial:true,
     message:'현재 경기에서 읽은 구역·블록입니다. 아직 열지 않았거나 수신하지 않은 블록은 목록에 없을 수 있습니다.'};

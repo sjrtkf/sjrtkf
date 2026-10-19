@@ -8,7 +8,7 @@ const {parseMetadata}=require('../src/metadata');
 // Exercise real main orchestration, ChromeTarget action mapping, metadata
 // enrichment, ranking and selection/completion coordinators together. Only
 // the Chrome/HTTP boundary is a fixture; no site, browser, OCR or seat hold runs.
-function seatFlowFixture({rowNo='1',delayedMapReads=0,blankMapReads=0}={}){
+function seatFlowFixture({rowNo='1',delayedMapReads=0,blankMapReads=0,startWithMap=false,mapSidebarCount=null,emptyMapReads=0}={}){
   const filename=path.resolve(__dirname,'../src/chrome-main.js'),load=createRequire(filename);
   const source=fs.readFileSync(filename,'utf8').split('app.whenReady().then')[0];
   const grade='본부석-중앙(W4~W5)',tab={id:1,title:'Synthetic sports fixture',url:'https://tickets.interpark.com/onestop/seat',documentId:'fixture-document'};
@@ -19,7 +19,7 @@ function seatFlowFixture({rowNo='1',delayedMapReads=0,blankMapReads=0}={}){
   const metadata=parseMetadata(rawMetadata),byId=new Map(metadata.map(row=>[row.id,row]));
   const geometry=metadata.map((row,index)=>({kind:'seat',id:row.id,label:'지도 후보 '+(index+1),available:true,group:'001:W4',fill:'#f00',cx:String(index*10),cy:'10'}));
   const trace=[],selected=[],selectedActions=[],network={healthy:true,sequence:0,pending:[],results:[]};
-  let phase='grades',api,acknowledge=null,completionCount=0,directMapCount=0,remainingMapReads=delayedMapReads,remainingBlankReads=blankMapReads,unchangedMapReads=0,boundaryCalls=0;
+  let phase='grades',api,acknowledge=null,completionCount=0,directMapCount=0,remainingMapReads=delayedMapReads,remainingBlankReads=blankMapReads,remainingEmptyReads=emptyMapReads,unchangedMapReads=0,boundaryCalls=0;
   function showMap(){
     phase='map';
     // Geometry carries no row/number/grade. The real metadata join must supply
@@ -71,18 +71,20 @@ function seatFlowFixture({rowNo='1',delayedMapReads=0,blankMapReads=0}={}){
       completed:phase==='price',busy:network.pending.length>0,captcha:false,dialog:null,notice:{present:false,enabled:false},
       selected:[...selected],selectedGrades:selected.map(()=>grade),
       selectedNames:selected.map(id=>{const s=byId.get(id);return `${s.block}블럭 ${s.rowLabel??s.row}열 ${s.number}번`;}),
-      grades:phase==='grades'?[{name:grade,count:3}]:[],hasSeats:phase==='map'||phase==='completing',
+      grades:phase==='grades'?[{name:grade,count:3}]:phase==='map'&&mapSidebarCount!=null?[{name:grade,count:mapSidebarCount}]:[],hasSeats:phase==='map'||phase==='completing',
       buttons:loading?[]:phase==='choice'?[{label:'자동 배정받기',enabled:true},{label:'직접 좌석 선택하기',enabled:true}]:phase==='map'?[{label:'선택 완료',enabled:selected.length===2},{label:'좌석도 전체보기',enabled:true}]:[],
       };
     }
     if(action==='live.liveRead'){
       if(phase==='grades')return {rows:[{kind:'grade',id:grade,name:grade,count:'3',available:true,label:grade}]};
-      assert.equal(phase,'map');trace.push('geometry-read');return {rows:geometry.map(row=>({...row}))};
+      assert.equal(phase,'map');trace.push('geometry-read');
+      const empty=remainingEmptyReads>0;if(empty)remainingEmptyReads--;
+      return {rows:[...geometry.map(row=>({...row,available:!empty})),...(mapSidebarCount!=null?[{kind:'grade',id:grade,name:grade,count:String(mapSidebarCount),available:true,label:grade}]:[])]};
     }
     if(action==='live.liveAction'){
       assert.equal(arg.action,'click');
       if(arg.row.kind==='grade'){
-        assert.equal(phase,'grades');assert.equal(arg.row.name,grade);phase='choice';trace.push('grade-open');return true;
+        assert.ok(phase==='grades'||phase==='map'&&mapSidebarCount!=null);assert.equal(arg.row.name,grade);phase='choice';trace.push('grade-open');return true;
       }
       throw Error('Seat click is forbidden in the HTTP flow');
     }
@@ -99,7 +101,7 @@ function seatFlowFixture({rowNo='1',delayedMapReads=0,blankMapReads=0}={}){
   vm.createContext(context);vm.runInContext(source+`
     bridge=fixtureBridge;
     globalThis.api={autoLoop,trackTabs,onBrowserEvent,current,ensureNetwork,begin:()=>beginRun(current(),${JSON.stringify(preferences)},'auto')};`,context);
-  api=context.api;api.trackTabs([{...tab}]);
+  api=context.api;api.trackTabs([{...tab}]);if(startWithMap)showMap();
   return {api,trace,selectedActions,network,get phase(){return phase;},get completionCount(){return completionCount;},get directMapCount(){return directMapCount;},get unchangedMapReads(){return unchangedMapReads;}};
 }
 
@@ -129,4 +131,31 @@ test('Blank frames while the direct seat map loads are not treated as returning 
   const result=await f.api.autoLoop(run);
   assert.equal(result.completed,true);assert.equal(f.directMapCount,1);
   assert.equal(f.completionCount,1);assert.equal(run.awaitingGradesAt,null);
+});
+
+test('A visible map is selected even when its visible grade sidebar reports zero remaining seats',async()=>{
+  const f=seatFlowFixture({startWithMap:true,mapSidebarCount:0}),run=f.api.begin();await f.api.ensureNetwork(f.api.current());
+  const result=await f.api.autoLoop(run);
+  assert.equal(result.completed,true);assert.equal(f.phase,'payment');assert.equal(f.completionCount,1);
+  assert.deepEqual(f.selectedActions.map(s=>s.id),['seat_block_fixture-1','seat_block_fixture-2']);
+  assert.equal(run.retry.cycle,1);assert.equal(run.retry.attempted,1);assert.equal(f.directMapCount,0);
+  assert.deepEqual(f.trace,['observer-ready','geometry-read','http-begin','http-approved','validated-navigation']);
+});
+
+test('A mixed screen keeps grade-first navigation when its sidebar lists an eligible grade',async()=>{
+  const f=seatFlowFixture({startWithMap:true,mapSidebarCount:3,emptyMapReads:1}),run=f.api.begin();await f.api.ensureNetwork(f.api.current());
+  const result=await f.api.autoLoop(run);
+  assert.equal(result.completed,true);assert.equal(f.phase,'payment');assert.equal(f.completionCount,1);
+  assert.equal(run.retry.cycle,1);assert.equal(run.retry.attempted,1);assert.equal(f.directMapCount,1);
+  assert.deepEqual(f.trace,['observer-ready','geometry-read','grade-open','direct-map','geometry-read','http-begin','http-approved','validated-navigation']);
+});
+
+test('After a zero-count sidebar round is exhausted, the next round checks the current map for changed seats',async()=>{
+  const f=seatFlowFixture({startWithMap:true,mapSidebarCount:0,emptyMapReads:1}),run=f.api.begin();await f.api.ensureNetwork(f.api.current());
+  run.gradeOpenedAt=Date.now()-1000;
+  const result=await f.api.autoLoop(run);
+  assert.equal(result.completed,true);assert.equal(f.phase,'payment');assert.equal(f.completionCount,1);
+  assert.equal(run.retry.cycle,2);assert.equal(run.retry.attempted,1);assert.equal(f.directMapCount,0);
+  assert.deepEqual(f.selectedActions.map(s=>s.id),['seat_block_fixture-1','seat_block_fixture-2']);
+  assert.deepEqual(f.trace,['observer-ready','geometry-read','geometry-read','geometry-read','http-begin','http-approved','validated-navigation']);
 });

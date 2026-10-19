@@ -8,7 +8,7 @@ const {EventEmitter}=require('node:events');
 const entry=require('./entry'),live=require('./live-adapter'),flow=require('./flow'),captcha=require('./captcha-page'),manualCaptcha=require('./manual-captcha-page');
 const pageActions={
   stopWatchers:function stopWatchers(){if(window.__ticketDirectApi)window.__ticketDirectApi.cancelled=true;if(window.__ticketHttpBooking){window.__ticketHttpBooking.cancelled=true;try{const r=JSON.parse(sessionStorage.getItem("baseball/http-booking")||"null");if(r){r.cancelled=true;sessionStorage.setItem("baseball/http-booking",JSON.stringify(r));}}catch{}}window.__ticketSeatChanges?.stop();window.__bearsEntry?.stop();window.__bearsGate?.stop();window.__bearsCaptchaPage?.cancel();window.__ticketManualCaptchaPage?.cancel();return true;},
-  pageClock:function pageClock(){return {pageMono:performance.now(),documentId:window.__bearsGate?.status.documentId};},
+  pageClock:function pageClock({entryStage='gate'}={}){return {pageMono:performance.now(),documentId:(entryStage==='listing'?window.__bearsEntry:window.__bearsGate)?.status.documentId};},
   gateSnapshot:function gateSnapshot(){return window.__bearsGate?.status||null;},
   showAll:function showAll(){const b=[...document.querySelectorAll('button')].find(e=>e.textContent.trim()==='전체보기'&&e.getBoundingClientRect().width>0);if(!b)return true;return new Promise(resolve=>{let timer;const finish=()=>{clearTimeout(timer);observer.disconnect();resolve(true);};const observer=new MutationObserver(finish);observer.observe(b.parentElement||document.body,{subtree:true,childList:true,attributes:true});timer=setTimeout(finish,1500);siteInvoke(b);});}
 };

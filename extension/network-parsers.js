@@ -4,25 +4,27 @@ const ORIGIN='https://tickets.interpark.com',ENTRY_ORIGIN='https://ent-waiting-a
 const CONFLICT_CODES=new Set(['P40054','P41150','P41149','P40021']);
 const OPERATIONS={PreselectSeat:['select','preselectSeat'],BulkPreselectSeats:['select','bulkPreselectSeats'],DeselectSeat:['deselect','deselectSeat'],BulkDeselectSeats:['deselect','bulkDeselectSeats']};
 const seatIds=values=>[...new Set((Array.isArray(values)?values:[]).filter(v=>typeof v==='string'&&v.length<=200).map(v=>v.startsWith('seat_block_')?v:'seat_block_'+v))];
+const parseSeatLabels=function parseSeatLabels(rowNo,seatNo){
+  const raw=typeof rowNo==='string'||typeof rowNo==='number'?String(rowNo):'';
+  const qualified=raw.match(/^([A-Z]\d{1,2})구역\s+(\d+|[A-Z])열$/),text=qualified?qualified[2]:raw;
+  const numeric=text.match(/^(\d+)(?:열)?$/),alpha=text.match(/^([A-Z])(?:열)?$/);
+  let row=null,rowLabel=null,rowKind=null;
+  if(numeric&&Number.isSafeInteger(Number(numeric[1]))){row=Number(numeric[1]);rowLabel=String(row);rowKind='numeric';}
+  else if(alpha){row=alpha[1].charCodeAt(0)-64;rowLabel=alpha[1];rowKind='alpha';}
+  const rawNumber=typeof seatNo==='string'||typeof seatNo==='number'?String(seatNo):'',numberMatch=rawNumber.match(/^(\d+)(?:번)?$/);
+  const number=numberMatch&&Number.isSafeInteger(Number(numberMatch[1]))?Number(numberMatch[1]):null;
+  return {row,rowLabel,rowKind,number};
+};
 return {
 metadata:{
 parseMetadata:function parseMetadata(body){
-  // Keep this helper inside the parser: extension/build.js serializes the
-  // parser as a standalone function into the static extension bundle.
-  function parseRow(value){
-    // Football seatMeta observed 2026-10-16 uses e.g. "W1구역 10열".
-    // Strip only this explicit area prefix; never infer a row from arbitrary text.
-    const raw=String(value??''),qualified=raw.match(/^([A-Z]\d{1,2})구역\s+(\d+|[A-Z])열$/);
-    const text=qualified?qualified[2]:raw,numeric=text.match(/^(\d+)(?:열)?$/);
-    if(numeric){const row=Number(numeric[1]);return {row,rowLabel:String(row),rowKind:'numeric'};}
-    // Support the observed single uppercase-letter labels only. A is ordinal
-    // 1 for filtering; rowIdx/colIdx and neighbors still decide adjacency.
-    const alpha=text.match(/^([A-Z])(?:열)?$/);
-    if(alpha)return {row:alpha[1].charCodeAt(0)-64,rowLabel:alpha[1],rowKind:'alpha'};
-    return {row:null,rowLabel:null,rowKind:null};
-  }
+  const diagnosticLabel=value=>typeof value==='string'?value.slice(0,80):typeof value==='number'&&Number.isFinite(value)?String(value).slice(0,80):null;
   const payload=typeof body==='string'?JSON.parse(body):body;
   const blocks=Array.isArray(payload)?payload:Array.isArray(payload?.data)?payload.data:[];
+  // Count every returned member, including hidden or unparseable seats. A
+  // self-labelled one-member group is the only observed grouped format we use.
+  const groupSizes=new Map();
+  for(const block of blocks)for(const seat of Array.isArray(block?.seats)?block.seats:[])if(typeof seat?.seatGroupId==='string')groupSizes.set(seat.seatGroupId,(groupSizes.get(seat.seatGroupId)||0)+1);
   const result=[];
   for(const block of blocks){
     if(typeof block.blockKey!=='string'||!Array.isArray(block.seats))continue;
@@ -40,9 +42,15 @@ parseMetadata:function parseMetadata(body){
       let segment=0;
       for(let i=0;i<rowSeats.length;i++){
         const s=rowSeats[i];if(i&&s.colIdx>rowSeats[i-1].colIdx+1)segment++;
-        const rowInfo=parseRow(s.rowNo),rawNumber=String(s.seatNo??'').match(/^(\d+)(?:번)?$/);
+        const rowInfo=parseSeatLabels(s.rowNo,s.seatNo);
+        const blockLabel=block.blockKey.split(':').pop(),groupSize=typeof s.seatGroupId==='string'?groupSizes.get(s.seatGroupId):0;
+        const singletonGroup=s.isExposable===true&&typeof s.seatGradeName==='string'&&/휠체어|장애인/.test(s.seatGradeName)&&/^\d+$/.test(String(s.seatGrade??''))&&/^\d+$/.test(blockLabel)
+          &&s.rowNo===blockLabel+'블록'&&typeof s.seatNo==='string'&&s.seatNo.length<=80&&/^W[1-9]\d*-1$/.test(s.seatNo)
+          &&Number.isSafeInteger(s.rowIdx)&&s.rowIdx>=0&&Number.isSafeInteger(s.colIdx)&&s.colIdx>=0&&groupSize===1&&s.seatGroupId===s.seatInfoId+'::1::1';
         result.push({id:'seat_block_'+s.seatInfoId,block:block.blockKey.split(':').pop(),blockKey:block.blockKey,gradeCode:String(s.seatGrade??''),grade:typeof s.seatGradeName==='string'?s.seatGradeName:null,
-          ...rowInfo,displayRow:typeof s.rowNo==='string'?s.rowNo:rowInfo.rowLabel+'열',floor:typeof s.floor==='string'?s.floor:'',number:rawNumber?Number(rawNumber[1]):null,rowIdx:s.rowIdx,colIdx:s.colIdx,
+          hasMetadata:true,rawRowLabel:diagnosticLabel(s.rowNo),rawSeatNumber:diagnosticLabel(s.seatNo),
+          singletonGroup,labelFormat:singletonGroup?'wheelchair-block':null,groupSize,seatGroupId:singletonGroup?s.seatGroupId:null,
+          ...rowInfo,displayRow:typeof s.rowNo==='string'?s.rowNo:rowInfo.rowLabel+'열',floor:typeof s.floor==='string'?s.floor:'',rowIdx:s.rowIdx,colIdx:s.colIdx,
           segment:`${block.blockKey}:${s.rowIdx}:${segment}`,
           aisle:!cols.has(s.colIdx-1)||!cols.has(s.colIdx+1),
           aisleDistance:Math.min(...edges.map(col=>Math.abs(col-s.colIdx))),

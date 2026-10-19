@@ -79,6 +79,17 @@ const resolveGradeNames=function resolveGradeNames(rows){
   }
   return {grades,gradeConflicts,duplicateCount};
 };
+const parseSeatLabels=function parseSeatLabels(rowNo,seatNo){
+  const raw=typeof rowNo==='string'||typeof rowNo==='number'?String(rowNo):'';
+  const qualified=raw.match(/^([A-Z]\d{1,2})구역\s+(\d+|[A-Z])열$/),text=qualified?qualified[2]:raw;
+  const numeric=text.match(/^(\d+)(?:열)?$/),alpha=text.match(/^([A-Z])(?:열)?$/);
+  let row=null,rowLabel=null,rowKind=null;
+  if(numeric&&Number.isSafeInteger(Number(numeric[1]))){row=Number(numeric[1]);rowLabel=String(row);rowKind='numeric';}
+  else if(alpha){row=alpha[1].charCodeAt(0)-64;rowLabel=alpha[1];rowKind='alpha';}
+  const rawNumber=typeof seatNo==='string'||typeof seatNo==='number'?String(seatNo):'',numberMatch=rawNumber.match(/^(\d+)(?:번)?$/);
+  const number=numberMatch&&Number.isSafeInteger(Number(numberMatch[1]))?Number(numberMatch[1]):null;
+  return {row,rowLabel,rowKind,number};
+};
 const planAdultPrices=function planAdultPrices(payload,seats){
   const groups=Array.isArray(payload)?payload:payload?.prices;
   if(!Array.isArray(groups)||!groups.length||groups.length>500||payload?.toping?.code)throw Error('PRICE_RESPONSE_UNSUPPORTED');
@@ -161,6 +172,100 @@ return Object.freeze({
   }
   return [...unique.values()];
 },
+"entry.armListing":function armListing({key,runId=null,clockRequired=false,timeoutMs=15*86400000}={}) {
+  if(typeof key!=='string'||!key.trim())throw Error('대상 경기 정보가 없습니다. 경기 목록을 다시 읽어 주세요.');
+  if(!Number.isFinite(timeoutMs)||timeoutMs<0)throw Error('경기 목록 대기 시간이 올바르지 않습니다.');
+  const previous=window.__bearsEntry;
+  // A failed/stopped run also retains its latch. Only a new run may retry it.
+  if(previous?.status?.key===key&&previous.status.runId===runId)return previous.status;
+  previous?.stop();
+  const started=performance.now(),sequence=(previous?.sequence||0)+1;
+  const currentUrl=()=>String(location.origin)+String(location.pathname)+String(location.search||'')+String(location.hash||'');
+  const startUrl=currentUrl(),control=window.__ticketSiteCode,epoch=control?.epoch;
+  const status={phase:'armed',key,runId,documentId:String(performance.timeOrigin)+':'+started+':listing:'+sequence,clock:{outcome:'not-configured'},trigger:null,enabledObservedMono:null,clickedMono:null,clickedAt:null,invokeDelayMs:null,reason:'선택한 경기의 예매 버튼 활성화를 기다립니다.'};
+  let observer,timer,clockTimer,done=false,cancelled=false;
+  const cleanup=()=>{clearTimeout(timer);clearTimeout(clockTimer);observer?.disconnect();};
+  const finish=(phase,reason)=>{status.phase=phase;status.reason=reason;done=true;cleanup();};
+  const stop=()=>{cancelled=true;done=true;cleanup();if(status.phase==='armed'){status.phase='stopped';status.reason='경기 목록 대기를 중지했습니다.';}};
+  const visible=element=>{
+    const rect=element.getBoundingClientRect(),css=getComputedStyle(element);
+    return element.isConnected!==false&&rect.width>0&&rect.height>0&&css.display!=='none'&&css.visibility!=='hidden'&&css.visibility!=='collapse';
+  };
+  const find=()=>[...document.querySelectorAll('button.grid-area_cta')].filter(button=>{
+    const card=button.parentElement,info=card?.querySelector('.grid-area_info')?.textContent?.trim();
+    const teams=[...(card?.querySelectorAll('.grid-area_match img[alt]')||[])].map(image=>image.alt).join(' vs ');
+    return !!info&&!!teams&&info+' | '+teams===key&&visible(button);
+  });
+  const wait=()=>{timer=setTimeout(()=>tick(),Math.max(1,Math.min(250,started+timeoutMs-performance.now())));};
+  const failed=()=>{
+    // The shared dispatcher stops observers before propagating site errors.
+    // Preserve that failure report while ignoring an explicit stop/new run.
+    const runtimeFailure=control&&window.__ticketSiteCode===control&&control.epoch===epoch&&control.error;
+    if(cancelled&&!runtimeFailure||window.__bearsEntry?.status!==status||status.phase!=='clicked')return;
+    finish(currentUrl()!==startUrl?'navigated':'blocked',currentUrl()!==startUrl?'화면이 이동하여 이전 경기 목록 실행을 종료했습니다.':'사이트 진입 함수 실행 결과를 확인하지 못했습니다. 경기 화면을 확인한 뒤 새로 시작해 주세요.');
+  };
+  const tick=(source='activation')=>{
+    if(done)return;
+    clearTimeout(timer);
+    const now=performance.now();
+    if(currentUrl()!==startUrl){finish('navigated','화면이 이동하여 경기 목록 대기를 종료했습니다.');return;}
+    if(now-started>=timeoutMs){finish('timeout','선택한 경기의 활성화 대기 시간이 지났습니다.');return;}
+    // Authentication/notice dialogs may temporarily hide the listing itself.
+    // Wait for their normal completion before deciding that a card was lost.
+    const modal=[...document.querySelectorAll('[role="dialog"], [aria-modal="true"], [aria-busy="true"]')].some(visible);
+    const notice=[...document.querySelectorAll('button')].some(button=>visible(button)&&String(button.textContent||'').trim()==='확인하고 예매하기');
+    if(modal||notice){status.reason='안내/인증/처리가 끝나기를 기다립니다.';wait();return;}
+    const matches=find();
+    if(matches.length!==1){finish('blocked',matches.length?'대상 경기의 보이는 예매 버튼이 여러 개입니다. 경기 목록을 다시 확인해 주세요.':'대상 경기의 보이는 예매 버튼을 찾을 수 없습니다. 경기 목록을 다시 확인해 주세요.');return;}
+    const button=matches[0];
+    const enabled=!button.disabled&&button.getAttribute('aria-disabled')!=='true'&&String(button.textContent||'').trim()==='예매하기';
+    if(enabled)status.enabledObservedMono??=now;
+    else status.enabledObservedMono=null;
+    const configured=Number.isFinite(status.clock.deadlineMono),clockValid=configured&&now<=status.clock.validUntilMono;
+    if(configured&&!clockValid)status.clock.outcome='stale';
+    if(clockRequired&&!clockValid){status.reason='유효한 서버 시각 설정을 기다립니다.';wait();return;}
+    if(clockValid&&now<status.clock.deadlineMono){status.reason='서버 시각의 예매 시작 시점을 기다립니다.';wait();return;}
+    if(clockValid&&status.clock.firedAtMono==null){status.clock.firedAtMono=now;status.clock.delayMs=now-status.clock.deadlineMono;status.clock.outcome='not-ready';}
+    if(!enabled){status.reason='선택한 경기의 예매 버튼 활성화를 기다립니다.';wait();return;}
+    // Acquire the latch before invoking a site function, which can itself
+    // synchronously mutate the DOM, navigate, throw, or return a rejection.
+    status.phase='clicked';status.trigger=source==='server-clock'?'server-clock':'activation';
+    status.clickedMono=performance.now();status.clickedAt=Date.now();status.invokeDelayMs=Math.max(0,status.clickedMono-status.enabledObservedMono);
+    if(clockValid)status.clock.outcome='clicked';
+    status.reason='활성화 확인 · 선택한 경기의 사이트 진입 함수 실행';done=true;cleanup();
+    try{Promise.resolve(siteInvoke(button)).catch(failed);}catch{failed();}
+  };
+  const setClock=config=>{
+    if(done||config?.runId!==runId||config?.documentId!==status.documentId||config?.key!==key)return false;
+    const {deadlineMono,validUntilMono,uncertaintyMs,openAt}=config;
+    if(config.source!=='ticket-server'||![deadlineMono,validUntilMono,uncertaintyMs,openAt].every(Number.isFinite)||uncertaintyMs<0||uncertaintyMs>501||validUntilMono<deadlineMono)return false;
+    clearTimeout(clockTimer);const clock={outcome:'armed',deadlineMono,validUntilMono,uncertaintyMs,openAt};status.clock=clock;
+    const fire=()=>{
+      if(done||status.clock!==clock)return;
+      const now=performance.now();
+      if(now>validUntilMono){status.clock.outcome='stale';tick();return;}
+      if(now<deadlineMono){clockTimer=setTimeout(fire,Math.ceil(deadlineMono-now));return;}
+      status.clock.firedAtMono=now;status.clock.delayMs=now-deadlineMono;status.clock.outcome='not-ready';tick('server-clock');
+    };
+    fire();return true;
+  };
+  observer=new MutationObserver(()=>tick());observer.observe(document.body,{subtree:true,childList:true,attributes:true,characterData:true});
+  window.__bearsEntry={status,stop,setClock,sequence};tick();return status;
+},
+"entry.setListingClock":function setListingClock(config){return window.__bearsEntry?.setClock?.(config)||false;},
+"entry.listingState":function listingState(){return window.__bearsEntry?.status||null;},
+"entry.stopListing":function stopListing({runId=null,key}={}){
+  if(typeof key!=='string'||!key.trim())return {stopped:false};
+  const listing=window.__bearsEntry;
+  if(!listing){
+    // A stop may arrive before its arm command. Retain the same-run latch
+    // so a delayed install cannot reintroduce a watcher after popup adoption.
+    const status={phase:'stopped',key,runId,documentId:String(performance.timeOrigin)+':'+performance.now()+':listing:1',clock:{outcome:'not-configured'},trigger:null,enabledObservedMono:null,clickedMono:null,clickedAt:null,invokeDelayMs:null,reason:'경기 목록 대기를 중지했습니다.'};
+    window.__bearsEntry={status,stop(){},sequence:1};return {stopped:true};
+  }
+  if(listing.status?.runId!==runId||listing.status?.key!==key||typeof listing.stop!=='function')return {stopped:false};
+  listing.stop();return {stopped:true};
+},
 "entry.prepareEntry":function prepareEntry({key,runId=null}) {
   const previous=window.__bearsEntry;
   if(previous?.status?.key===key&&previous.status.runId===runId&&previous.status.phase==='clicked')return previous.status;
@@ -187,12 +292,14 @@ return Object.freeze({
   if(!notices.length)delete window.__bearsBookingNotice;
   let noticeKey=null,container=notices.length===1?notices[0].parentElement:null;
   while(container&&container!==document.body){
-    const headings=[...container.querySelectorAll('h1,h2,h3,[role="heading"],[class*="title"],[class*="Title"]')].filter(visible).map(e=>e.textContent.replace(/\s/g,''));
+    const headings=[...container.querySelectorAll('h1,h2,h3,[role="heading"],[class*="title"],[class*="Title"],span,p,strong,b,div')].filter(visible).map(e=>e.textContent.replace(/\s/g,''));
     noticeKey=headings.find(text=>['예매안내','취소/환불안내'].includes(text))||null;
     if(noticeKey)break;
     container=container.parentElement;
   }
-  status.notice={present:notices.length>0,enabled:notices.length===1&&!notices[0].disabled&&notices[0].getAttribute('aria-disabled')!=='true',key:noticeKey};
+  let signature=null;
+  if(noticeKey){let hash=2166136261;for(const character of container.textContent.replace(/\s/g,''))hash=Math.imul(hash^character.codePointAt(0),16777619);signature=noticeKey+':'+(hash>>>0).toString(16);}
+  status.notice={present:notices.length>0,enabled:notices.length===1&&!notices[0].disabled&&notices[0].getAttribute('aria-disabled')!=='true',key:noticeKey,signature};
   const buttons=root?[...root.querySelectorAll('button')].filter(b=>visible(b)&&b.textContent.trim()!=='확인하고 예매하기'&&/(?:예매하기$|^남은시간\s*\d{1,2}:\d{2}$)/.test(b.textContent.trim())):[];
   if(!status.prepared||buttons.length!==1)return {...status,reason:'준비 완료 안내와 유일한 예매 버튼을 기다립니다.'};
   const button=buttons[0];status.buttonText=button.textContent.trim();
@@ -277,14 +384,28 @@ return Object.freeze({
 "entry.setGateClock":function setGateClock(config){return window.__bearsGate?.setClock?.(config)||false;},
 "entry.noteGateRequest":function noteGateRequest({runId}={}){const gate=window.__bearsGate;if(gate?.status.runId!==runId)return null;gate.requestObserved?.();return gate.status;},
 "live.liveRead":function liveRead() {
+  const visible = el => {const r=el.getBoundingClientRect();const s=getComputedStyle(el);return r.width>0&&r.height>0&&s.visibility==='visible'&&s.display!=='none';};
   if(typeof window!=='undefined'&&typeof MutationObserver==='function'&&document.body&&!window.__ticketSeatChanges){
-    const state={revision:0,listeners:new Set()};
-    state.observer=new MutationObserver(()=>{state.revision++;for(const fn of [...state.listeners])fn();});
-    state.observer.observe(document.body,{subtree:true,childList:true,characterData:true,attributes:true,attributeFilter:['class','disabled','aria-disabled','aria-busy','style']});
+    // A countdown, animation, or identical React render is not new inventory.
+    // Compare only visible seats, grade inventory and blockers/navigation that
+    // can actually change the next step. Do not wake on every body mutation.
+    const signature=()=>JSON.stringify([
+      [...document.querySelectorAll('circle.js-seat[id]')].map(e=>[e.id,e.parentElement?.id,/SeatMap_disabled/.test(e.getAttribute('class')||''),/SeatMap_selected/.test(e.getAttribute('class')||''),e.getAttribute('fill'),e.getAttribute('cx'),e.getAttribute('cy'),visible(e)]),
+      [...document.querySelectorAll('button[class*="SportsSeatGradeList_contentItem__"]')].map(e=>[e.querySelector('[class*="SportsSeatGradeList_contentGradeName__"]')?.textContent?.trim(),e.querySelector('[class*="SportsSeatGradeList_contentRemainCount__"]')?.textContent?.trim(),!!e.disabled,e.getAttribute('aria-disabled'),visible(e)]),
+      [...document.querySelectorAll('img[alt="캡챠 이미지"],[class*="ModalCaptchaText_captchaImage__"],[role="alertdialog"],[role="dialog"][aria-modal="true"],[aria-busy="true"],[class*="EntLoading_wrap__"],[class*="EntEntryLoading_wrap__"]')].map(e=>visible(e)),
+      [...document.querySelectorAll('button')].filter(e=>['확인하고 예매하기','직접 좌석 선택하기','좌석도 전체보기','선택 완료'].includes(e.textContent.trim())).map(e=>[e.textContent.trim(),!!e.disabled,e.getAttribute('aria-disabled'),visible(e)])
+    ]);
+    const tracked='circle[id],button,img[alt="캡챠 이미지"],[class*="ModalCaptchaText_captchaImage__"],[role="alertdialog"],[role="dialog"][aria-modal="true"],[aria-busy="true"],[class*="EntLoading_wrap__"],[class*="EntEntryLoading_wrap__"]';
+    const touches=node=>{const e=node?.nodeType===1?node:node?.parentElement;return !!(e?.closest?.(tracked)||e?.querySelector?.(tracked));};
+    const state={revision:0,listeners:new Set(),signature:signature()};
+    state.observer=new MutationObserver(records=>{
+      if(records?.length&&!records.some(r=>touches(r.target)||[...(r.addedNodes||[]),...(r.removedNodes||[])].some(touches)))return;
+      const next=signature();if(next===state.signature)return;state.signature=next;state.revision++;for(const fn of [...state.listeners])fn();
+    });
+    state.observer.observe(document.body,{subtree:true,childList:true,characterData:true,attributes:true,attributeFilter:['class','disabled','aria-disabled','aria-busy','style','hidden','aria-hidden','id','fill','cx','cy']});
     state.stop=()=>{state.observer.disconnect();for(const fn of [...state.listeners])fn(true);delete window.__ticketSeatChanges;};
     window.__ticketSeatChanges=state;
   }
-  const visible = el => {const r=el.getBoundingClientRect();const s=getComputedStyle(el);return r.width>0&&r.height>0&&s.visibility==='visible'&&s.display!=='none';};
   if(document.querySelector('img[alt="캡챠 이미지"]')) return {rows:[],message:'보안문자를 먼저 입력해 주세요.'};
   const circles=[...document.querySelectorAll('circle.js-seat[id]')];
   const rows=[];
@@ -323,7 +444,7 @@ return Object.freeze({
 "live.waitForChange":function waitForChange({revision,timeoutMs=3500}={}){
   const state=window.__ticketSeatChanges;
   if(!state||state.revision!==revision)return Promise.resolve({changed:true});
-  const delay=Math.min(4000,Math.max(1,Number(timeoutMs)||3500));
+  const delay=Math.min(5000,Math.max(1,Number(timeoutMs)||3500));
   return new Promise(resolve=>{let timer;const done=stopped=>{clearTimeout(timer);state.listeners.delete(done);resolve({changed:state.revision!==revision,stopped:stopped===true,revision:state.revision});};state.listeners.add(done);timer=setTimeout(done,delay);if(state.revision!==revision)done();});
 },
 "flow.scene":function scene(){
@@ -349,12 +470,14 @@ return Object.freeze({
   if(!notices.length)delete window.__bearsBookingNotice;
   let noticeKey=null,container=notices.length===1?notices[0].parentElement:null;
   while(container&&container!==document.body){
-    const headings=[...container.querySelectorAll('h1,h2,h3,[role="heading"],[class*="title"],[class*="Title"]')].filter(shown).map(e=>e.textContent.replace(/\s/g,''));
+    const headings=[...container.querySelectorAll('h1,h2,h3,[role="heading"],[class*="title"],[class*="Title"],span,p,strong,b,div')].filter(shown).map(e=>e.textContent.replace(/\s/g,''));
     noticeKey=headings.find(text=>['예매안내','취소/환불안내'].includes(text))||null;
     if(noticeKey)break;
     container=container.parentElement;
   }
-  return {completed:completed&&!busy&&![...document.querySelectorAll('img[alt="캡챠 이미지"]')].some(shown),busy,dialog,notice:{present:notices.length>0,enabled:notices.length===1&&!notices[0].disabled&&notices[0].getAttribute('aria-disabled')!=='true',key:noticeKey},captcha:[...document.querySelectorAll('img[alt="캡챠 이미지"],[class*="ModalCaptchaText_captchaImage__"] img')].some(shown),buttons,selected,grades,hasSeats:[...document.querySelectorAll('circle.js-seat[id]')].some(shown),selectedGrades:[...document.querySelectorAll('[class*="InfoSelected_contentSeatGrade__"]')].map(e=>e.textContent.trim()),selectedNames:[...document.querySelectorAll('[class*="InfoSelected_contentSeatName__"]')].map(e=>e.textContent.trim())};
+  let signature=null;
+  if(noticeKey){let hash=2166136261;for(const character of container.textContent.replace(/\s/g,''))hash=Math.imul(hash^character.codePointAt(0),16777619);signature=noticeKey+':'+(hash>>>0).toString(16);}
+  return {completed:completed&&!busy&&![...document.querySelectorAll('img[alt="캡챠 이미지"]')].some(shown),busy,dialog,notice:{present:notices.length>0,enabled:notices.length===1&&!notices[0].disabled&&notices[0].getAttribute('aria-disabled')!=='true',key:noticeKey,signature},captcha:[...document.querySelectorAll('img[alt="캡챠 이미지"],[class*="ModalCaptchaText_captchaImage__"] img')].some(shown),buttons,selected,grades,hasSeats:[...document.querySelectorAll('circle.js-seat[id]')].some(shown),selectedGrades:[...document.querySelectorAll('[class*="InfoSelected_contentSeatGrade__"]')].map(e=>e.textContent.trim()),selectedNames:[...document.querySelectorAll('[class*="InfoSelected_contentSeatName__"]')].map(e=>e.textContent.trim())};
 },
 "flow.clickKnown":function clickKnown(label){
   if(!['확인하고 예매하기','직접 좌석 선택하기','선택 완료','좌석도 전체보기'].includes(label))throw new Error('허용하지 않은 단계입니다.');
@@ -369,7 +492,7 @@ return Object.freeze({
     if(button.disabled||button.getAttribute('aria-disabled')==='true')return {present:true,clicked:false,disabled:true};
     let container=button.parentElement,key=null;
     while(container&&container!==document.body){
-      key=[...container.querySelectorAll('h1,h2,h3,[role="heading"],[class*="title"],[class*="Title"]')].filter(shown).map(e=>e.textContent.replace(/\s/g,'')).find(text=>['예매안내','취소/환불안내'].includes(text))||null;
+      key=[...container.querySelectorAll('h1,h2,h3,[role="heading"],[class*="title"],[class*="Title"],span,p,strong,b,div')].filter(shown).map(e=>e.textContent.replace(/\s/g,'')).find(text=>['예매안내','취소/환불안내'].includes(text))||null;
       if(key)break;
       container=container.parentElement;
     }
@@ -390,12 +513,14 @@ return Object.freeze({
     };
     const otherModal=[...document.querySelectorAll('[role="dialog"],[role="alertdialog"],[aria-modal="true"]')].some(e=>shown(e)&&e!==container&&!e.contains(button)&&!gradeSheet(e));
     if(protectedText||inputs||otherModal)throw Error('인증·동의 또는 다른 안내가 함께 표시되어 자동으로 확인하지 않습니다.');
-    const clickedKeys=window.__bearsBookingNotice?.clickedKeys||[];
-    if(clickedKeys.includes(key))return {present:true,clicked:false,pending:true,key};
-    // Latch each recognized notice before invoking site code. DOM replacement
-    // cannot repeat it, while a different notice in this document can continue.
-    window.__bearsBookingNotice={clicked:true,clickedAt:Date.now(),clickedKeys:[...clickedKeys,key]};
-    siteInvoke(button);return {present:true,clicked:true,key};
+    let hash=2166136261;for(const character of text.replace(/\s/g,''))hash=Math.imul(hash^character.codePointAt(0),16777619);
+    const signature=key+':'+(hash>>>0).toString(16),previous=window.__bearsBookingNotice,clickedKeys=previous?.clickedKeys||[],clickedSignatures=previous?.clickedSignatures||[];
+    if(clickedSignatures.includes(signature)||previous&&!previous.clickedSignatures&&clickedKeys.includes(key))return {present:true,clicked:false,pending:true,key,signature};
+    // Consecutive notices can share a title (for example, seat-view guidance).
+    // Latch their normalized contents, so DOM replacement/spacing cannot repeat
+    // the same notice while a distinct, revalidated notice can continue.
+    window.__bearsBookingNotice={clicked:true,clickedAt:Date.now(),clickedKeys:[...new Set([...clickedKeys,key])],clickedSignatures:[...clickedSignatures,signature]};
+    siteInvoke(button);return {present:true,clicked:true,key,signature};
   }
   const matches=[...document.querySelectorAll('button')].filter(e=>(e.textContent.trim()||e.getAttribute('aria-label'))===label&&e.getBoundingClientRect().width>0&&!e.disabled&&e.getAttribute('aria-disabled')!=='true');
   if(matches.length!==1)throw new Error('다음 단계 버튼을 찾을 수 없습니다.');
@@ -720,10 +845,17 @@ return Object.freeze({
   const readContext=()=>readBookingContext().context;
   const c=readContext();
   const matches=x=>x?.goods?.goodsCode===expected.goodsCode&&x?.goods?.placeCode===expected.placeCode&&x?.playSeq?.playSeq===expected.playSeq;
+  let recovery=null;
+  const validRecovery=(state,current)=>state&&window.__ticketHttpBooking===state&&state.stage==='rejected'&&state.status==='blocked'&&state.code==='HTTP_METADATA_CHANGED'
+    &&state.mutationStarted===false&&Array.isArray(state.held)&&!state.held.length&&!state.pending&&!state.cancelled
+    &&state.identity===[expected.goodsCode,expected.placeCode,expected.playSeq].join(':')&&state.context?.sessionId===current.sessionId
+    &&Number.isFinite(state.expiresAt)&&Date.now()<=state.expiresAt
+    &&state.expected===JSON.stringify([current.goods,current.playSeq,current.sessionId,current.channelType,current.bizCode,current.seats||[],current.prices||[]]);
   const check=()=>{
     const current=readContext();
     if(location.origin!=='https://tickets.interpark.com'||location.pathname!=='/onestop/seat'||new URL(location.href).searchParams.get('step')==='price'||
       !matches(current)||!c.sessionId||current.sessionId!==c.sessionId||Date.now()>expiresAt)throw Error('상세 정보를 읽는 동안 예매 화면 또는 세션이 바뀌었습니다.');
+    if(recovery&&!validRecovery(recovery,current))throw Error('좌석 상세 변경을 재확인하는 동안 실행 상태가 바뀌었습니다.');
     if(c.goods.isInterlocking!==false||c.goods.reserved!==true)throw Error('확인된 일반 지정석만 상세 조회할 수 있습니다.');
     if([...document.querySelectorAll('img[alt="캡챠 이미지"],[role="alertdialog"],[role="dialog"][aria-modal="true"]')].some(shown)||
       [...document.querySelectorAll('button')].some(e=>shown(e)&&e.textContent.trim()==='확인하고 예매하기')||
@@ -733,7 +865,16 @@ return Object.freeze({
   };
   check();
   const observed=new Set([...document.querySelectorAll('circle.js-seat[id]')].map(e=>e.parentElement.id).filter(id=>id.startsWith('seat_block_')).map(id=>id.slice(11)));
-  if(blockKeys.some(k=>typeof k!=='string'||k.length>100||!observed.has(k)))throw Error('현재 지도에 없는 구역은 조회하지 않습니다.');
+  if(blockKeys.some(k=>typeof k!=='string'||k.length>100))throw Error('현재 지도에 없는 구역은 조회하지 않습니다.');
+  if(blockKeys.some(k=>!observed.has(k))){
+    // A cross-map candidate may have changed after its original map closed.
+    // Only this document's rejected, mutation-free HTTP attempt authorizes
+    // rereading its changed blocks; arbitrary off-map queries remain blocked.
+    recovery=window.__ticketHttpBooking;
+    const changed=new Set(Array.isArray(recovery?.changedIds)?recovery.changedIds:[]),seats=Array.isArray(recovery?.seats)?recovery.seats:[];
+    const allowed=new Set(seats.filter(seat=>changed.has(seat.id)).map(seat=>seat.blockKey));
+    if(!validRecovery(recovery,c)||blockKeys.some(k=>!observed.has(k)&&!allowed.has(k)))throw Error('현재 지도에 없는 구역은 조회하지 않습니다.');
+  }
   const baseHeaders={'Content-Type':'application/json','X-Requested-With':'XMLHttpRequest','X-Onestop-Channel':c.channelType||'NOL','X-Onestop-Session':c.sessionId};
   const request=async(url,options)=>{
     check();const response=await fetch(url,{credentials:'same-origin',cache:'no-store',redirect:'error',signal:AbortSignal.timeout(5000),...options});
@@ -873,8 +1014,8 @@ return Object.freeze({
   const context=()=>readBookingContext().context;
   const identity=c=>['goodsCode','placeCode'].map(k=>c.goods?.[k]).concat(c.playSeq?.playSeq).join(':');
   const fingerprint=c=>JSON.stringify([c.goods,c.playSeq,c.sessionId,c.channelType,c.bizCode,c.seats||[],c.prices||[]]);
-  const receipt=s=>sessionStorage.setItem(KEY,JSON.stringify({runId:s.runId,identity:s.identity,sessionId:s.context.sessionId,contextSignature:s.expected,stage:s.stage,held:s.held.map(v=>v.seatInfoId),seatsSignature:JSON.stringify(s.held),pricesSignature:JSON.stringify(s.prices||[]),confirmed:s.confirmed===true,validated:s.validated===true,route:s.route||null,cancelled:s.cancelled===true,at:Date.now()}));
-  const summary=s=>({stage:s.stage,status:s.status||'pending',code:s.code||null,httpStatus:s.httpStatus||null,apiCode:s.apiCode||null,heldCount:s.held.length,confirmed:s.confirmed===true,validated:s.validated===true,requestCount:s.requestCount,route:s.route||null});
+  const receipt=s=>sessionStorage.setItem(KEY,JSON.stringify({runId:s.runId,identity:s.identity,sessionId:s.context.sessionId,contextSignature:s.expected,stage:s.stage,held:s.held.map(v=>v.seatInfoId),seatsSignature:JSON.stringify(s.held),pricesSignature:JSON.stringify(s.prices||[]),confirmed:s.confirmed===true,validated:s.validated===true,route:s.route||null,cancelled:s.cancelled===true,mutationStarted:s.mutationStarted,at:Date.now()}));
+  const summary=s=>({stage:s.stage,status:s.status||'pending',code:s.code||null,httpStatus:s.httpStatus||null,apiCode:s.apiCode||null,heldCount:s.held.length,confirmed:s.confirmed===true,validated:s.validated===true,requestCount:s.requestCount,route:s.route||null,...(s.changedIds?{changedIds:s.changedIds}:{}),...(s.unavailableIds?{unavailableIds:s.unavailableIds}:{})});
   let s=window.__ticketHttpBooking;
   if(arg.action==='begin'){
     if(typeof arg.runId!=='string'||arg.runId.length>120||!Number.isFinite(arg.expiresAt)||Date.now()>arg.expiresAt)throw Error('HTTP_COMMAND_EXPIRED');
@@ -883,7 +1024,10 @@ return Object.freeze({
     const c=context();
     const resumeSelected=arg.resumeSelected===true;
     const selectedReceipt=resumeSelected&&old?.stage==='selected'&&old.sessionId===c.sessionId&&old.seatsSignature===JSON.stringify(c.seats);
-    if(s?.pending||!selectedReceipt&&(s?.held?.length&&s.context.sessionId===c.sessionId||old&&old.sessionId===c.sessionId&&!['released','rejected'].includes(old.stage)))throw Error('HTTP_PREVIOUS_RESULT_PENDING');
+    // Only an explicit persisted proof that no mutation started permits a
+    // cancelled read-only attempt to restart. Older/unknown receipts stay locked.
+    const cancelledReadOnly=old?.cancelled===true&&old.mutationStarted===false&&Array.isArray(old.held)&&old.held.length===0&&old.confirmed===false&&old.validated===false&&['metadata','prices','status','preselect'].includes(old.stage);
+    if(s?.pending||!selectedReceipt&&(s?.held?.length&&s.context.sessionId===c.sessionId||old&&old.sessionId===c.sessionId&&!cancelledReadOnly&&!['released','rejected'].includes(old.stage)))throw Error('HTTP_PREVIOUS_RESULT_PENDING');
     if(!arg.expected||identity(c)!==[arg.expected.goodsCode,arg.expected.placeCode,arg.expected.playSeq].join(':'))throw Error('HTTP_IDENTITY_CHANGED');
     if(c.goods?.isInterlocking!==false||c.goods?.reserved!==true||c.goods?.reservedSeat===false||c.nonReservedSeatGrade||c.channelType&&c.channelType!=='NOL'||c.partnerInfo&&Object.keys(c.partnerInfo).length||c.goods?.nonReservedGoodsCode)throw Error('HTTP_SEAT_SYSTEM_UNSUPPORTED');
     if((c.prices||[]).some(p=>p.selectedSeatCount>0))throw Error('HTTP_EXISTING_PRICE_SELECTION');
@@ -895,12 +1039,12 @@ return Object.freeze({
     if(resume&&new URL(location.href).searchParams.get('step')!=='price')throw Error('HTTP_PRICE_PAGE_REQUIRED');
     for(const v of seats)if(typeof v.id!=='string'||!v.id.startsWith('seat_block_'+c.goods.goodsCode+':'+c.goods.placeCode+':')||typeof v.blockKey!=='string'||!/^\d+$/.test(String(v.gradeCode)))throw Error('HTTP_SEAT_CODE_INVALID');
     if(resumeSelected&&(!Array.isArray(c.seats)||c.seats.length!==seats.length||c.seats.some(v=>!seats.some(w=>w.id==='seat_block_'+v.seatInfoId&&String(w.gradeCode)===String(v.seatGrade)))))throw Error('HTTP_EXISTING_SELECTION_MISMATCH');
-    s={runId:arg.runId,identity:identity(c),context:c,expected:fingerprint(c),expiresAt:arg.expiresAt,seats,blocks:[...new Set(seats.map(v=>v.blockKey))],records:[],held:resume||resumeSelected?[...c.seats]:[],resume,resumeSelected,stopAfterSeats:arg.stopAfterSeats===true,confirmed:resume,stage:resume?'prices':'metadata',requestCount:0,cancelled:false};
+    s={runId:arg.runId,identity:identity(c),context:c,expected:fingerprint(c),expiresAt:arg.expiresAt,seats,blocks:[...new Set(seats.map(v=>v.blockKey))],metadataOrder:{},records:[],held:resume||resumeSelected?[...c.seats]:[],resume,resumeSelected,stopAfterSeats:arg.stopAfterSeats===true,confirmed:resume,stage:resume?'prices':'metadata',requestCount:0,cancelled:false,mutationStarted:resume||resumeSelected};
     window.__ticketHttpBooking=s;receipt(s);return summary(s);
   }
   if(!s||s.runId!==arg.runId)throw Error('HTTP_RUN_MISMATCH');
   if(arg.action==='status')return summary(s);
-  if(arg.action==='cancel'){s.cancelled=true;receipt(s);return summary(s);}
+  if(arg.action==='cancel'){s.cancelled=true;if(!s.pending&&s.mutationStarted===false&&!s.held.length){s.stage='rejected';s.status='blocked';s.code='HTTP_CANCELLED';}receipt(s);return summary(s);}
   if(arg.action!=='step')throw Error('HTTP_ACTION_UNSUPPORTED');
   if(s.pending)return summary(s);
   if(s.status||['ready','selected'].includes(s.stage))return summary(s);
@@ -922,7 +1066,7 @@ return Object.freeze({
   const request=async(url,body,{field,cleanup=false,mutation=false}={})=>{
     const c=check(cleanup),headers={'Content-Type':'application/json','X-Onestop-Channel':c.channelType||'NOL','X-Onestop-Session':c.sessionId,'X-Ticket-BFF-Language':({ko:'KO',en:'EN',ja:'JA',zh:'ZH'})[c.lang||'ko']||'KO','X-OneStop-Trace-ID':crypto.randomUUID().replaceAll('-','').slice(0,16)};
     if(url==='/onestop/gql'&&c.goods.preOpt)headers.Authorization='Bearer '+c.goods.preOpt;else headers['X-Requested-With']='XMLHttpRequest';
-    s.requestCount++;s.inFlightMutation=mutation;s.httpStatus=null;s.apiCode=null;receipt(s);
+    s.requestCount++;s.inFlightMutation=mutation;if(mutation)s.mutationStarted=true;s.httpStatus=null;s.apiCode=null;receipt(s);
     let response,data;
     try{response=await fetch(url,{method:body?'POST':'GET',credentials:'same-origin',cache:'no-store',redirect:'error',headers,...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(7500)});const text=await response.text();if(text.length>12000000)throw Error();data=JSON.parse(text);}catch{throw Error(mutation?'HTTP_OUTCOME_UNKNOWN':'HTTP_READ_FAILED');}
     s.httpStatus=response.status;
@@ -942,22 +1086,58 @@ return Object.freeze({
       const blocks=s.blocks.splice(0,2),c=s.context,params=new URLSearchParams({goodsCode:c.goods.goodsCode,placeCode:c.goods.placeCode,playSeq:c.playSeq.playSeq,bizCode:c.bizCode||'WEBBR'});blocks.forEach(k=>params.append('blockKeys',k));
       const {data}=await request('/onestop/api/seatMeta?'+params);check();const list=Array.isArray(data)?data:data?.data;
       if(!Array.isArray(list)||list.length!==blocks.length||new Set(list.map(b=>b.blockKey)).size!==blocks.length)throw Error('HTTP_METADATA_MISMATCH');
+      for(const blockKey of blocks){const block=list.find(v=>v.blockKey===blockKey);if(!Array.isArray(block?.seats)||!block.seats.length||block.seats.some(v=>typeof v?.seatInfoId!=='string')||new Set(block.seats.map(v=>v.seatInfoId)).size!==block.seats.length)throw Error('HTTP_METADATA_MISMATCH');s.metadataOrder[blockKey]=block.seats.map(v=>v.seatInfoId);}
       for(const wanted of s.seats.filter(v=>blocks.includes(v.blockKey))){
         const block=list.find(v=>v.blockKey===wanted.blockKey),found=block?.seats?.filter(v=>v.seatInfoId===wanted.id.slice(11));
-        if(found?.length!==1)throw Error('HTTP_METADATA_MISMATCH');const v=found[0];
-        if(String(v.seatGrade)!==String(wanted.gradeCode)||v.isExposable!==true||v.seatGroupId!=null||v.rowIdx!==wanted.rowIdx||v.colIdx!==wanted.colIdx||String(v.seatNo).replace(/번$/,'')!==String(wanted.number))throw Error('HTTP_METADATA_MISMATCH');
+        if(found?.length!==1){s.changedIds=[wanted.id];throw Error('HTTP_METADATA_CHANGED');}const v=found[0];
+        // The observed wheelchair map uses block / Wn-1 labels and a group
+        // containing exactly one seat. Recheck the complete returned metadata;
+        // neither a cached flag nor the group ID suffix alone authorizes it.
+        const blockLabel=wanted.blockKey.split(':').pop();
+        const singleton=s.seats.length===1&&wanted.singletonGroup===true&&wanted.labelFormat==='wheelchair-block'&&wanted.groupSize===1&&wanted.grouped===true&&wanted.exposable===true
+          &&typeof v.seatGradeName==='string'&&/휠체어|장애인/.test(v.seatGradeName)&&/^\d+$/.test(blockLabel)&&wanted.block===blockLabel
+          &&wanted.rawRowLabel===v.rowNo&&v.rowNo===blockLabel+'블록'&&wanted.rawSeatNumber===v.seatNo&&typeof v.seatNo==='string'&&v.seatNo.length<=80&&/^W[1-9]\d*-1$/.test(v.seatNo)
+          &&wanted.row===null&&wanted.number===null&&wanted.seatGroupId===v.seatGroupId&&v.seatGroupId===v.seatInfoId+'::1::1'
+          &&Number.isSafeInteger(v.rowIdx)&&v.rowIdx>=0&&Number.isSafeInteger(v.colIdx)&&v.colIdx>=0
+          &&list.flatMap(b=>Array.isArray(b?.seats)?b.seats:[]).filter(member=>member?.seatGroupId===v.seatGroupId).length===1;
+        const labels=parseSeatLabels(v.rowNo,v.seatNo),sameLabels=Number.isSafeInteger(labels.row)&&Number.isSafeInteger(labels.number)&&labels.row===wanted.row&&labels.rowLabel===wanted.rowLabel&&labels.rowKind===wanted.rowKind&&labels.number===wanted.number;
+        // A per-seat name overrides a shared grade-code label. Preserve the
+        // established missing-name fallback, but re-rank a changed explicit
+        // name so restricted/obstructed and area filters run on fresh metadata.
+        const gradeKey=value=>typeof value==='string'?value.normalize('NFKC').replace(/\s+/g,'').toLowerCase():null;
+        const nameChanged=v.seatGradeName!=null&&v.seatGradeName!==''&&(!gradeKey(v.seatGradeName)||gradeKey(v.seatGradeName)!==gradeKey(wanted.grade));
+        if(String(v.seatGrade)!==String(wanted.gradeCode)||v.isExposable!==true||v.rowIdx!==wanted.rowIdx||v.colIdx!==wanted.colIdx
+          ||nameChanged||(v.seatGroupId!=null?!singleton:wanted.singletonGroup===true||!sameLabels)){s.changedIds=[wanted.id];throw Error('HTTP_METADATA_CHANGED');}
         const fields=['seatInfoId','seatGrade','seatGradeName','salesPrice','floor','rowNo','seatNo','posLeft','posTop','isExposable','rowIdx','colIdx','seatGroupId'];
         s.records.push({...Object.fromEntries(fields.filter(k=>v[k]!==undefined).map(k=>[k,v[k]])),blockKey:wanted.blockKey,seatGrade:String(v.seatGrade),seatGradeName:v.seatGradeName||wanted.grade,isSelectable:true});
       }
-      if(!s.blocks.length)s.stage=s.stopAfterSeats?'preselect':'prices';
+      if(!s.blocks.length)s.stage=s.resumeSelected?'prices':s.stopAfterSeats?'status':'prices';
     }else if(s.stage==='prices'){
       const c=s.context,params=new URLSearchParams({placeCode:c.goods.placeCode,playSeq:c.playSeq.playSeq,bizCode:c.bizCode||'',entMemberCode:c.entMemberCode||'',seatType:c.goods.kindOfGoods==='01007'&&c.goods.isSportsGroup?'SPORTS':'DEFAULT',seatGrade:s.seats.map(v=>v.gradeCode).join(',')});
-      const {data}=await request('/onestop/api/prices/'+c.goods.goodsCode+'?'+params);check();s.prices=planAdultPrices(data,s.resume?s.held:s.records);s.stage=s.resume?'validate':s.resumeSelected?'confirm':'preselect';
+      const {data}=await request('/onestop/api/prices/'+c.goods.goodsCode+'?'+params);check();s.prices=planAdultPrices(data,s.resume?s.held:s.records);s.stage=s.resume?'validate':s.resumeSelected?'confirm':'status';
+    }else if(s.stage==='status'){
+      // The native client indexes MSB-first hex status bits by the complete,
+      // unfiltered seatMeta order. This also validates seats outside the viewport.
+      const remaining=s.records.filter(v=>!s.held.some(h=>h.seatInfoId===v.seatInfoId)),blocks=[...new Set(remaining.map(v=>v.blockKey))],c=s.context;
+      const params=new URLSearchParams({goodsCode:c.goods.goodsCode,placeCode:c.goods.placeCode,playSeq:c.playSeq.playSeq,bizCode:c.bizCode||'WEBBR'});blocks.forEach(k=>params.append('blockKeys',k));
+      const {data}=await request('/onestop/api/seatStatus?'+params);check();
+      if(!Array.isArray(data?.data)||data.data.length!==blocks.length)throw Error('HTTP_SEAT_STATUS_INVALID');
+      const unavailable=[];
+      for(let i=0;i<blocks.length;i++){
+        const blockKey=blocks[i],ids=s.metadataOrder[blockKey],hex=data.data[i];
+        if(!Array.isArray(ids)||typeof hex!=='string'||!/^[0-9a-f]+$/i.test(hex)||hex.length!==Math.ceil(ids.length/4))throw Error('HTTP_SEAT_STATUS_INVALID');
+        const bits=[...hex].map(v=>parseInt(v,16).toString(2).padStart(4,'0')).join('');
+        for(const v of remaining.filter(v=>v.blockKey===blockKey)){const index=ids.indexOf(v.seatInfoId);if(index<0)throw Error('HTTP_SEAT_STATUS_INVALID');if(bits[index]!=='1')unavailable.push('seat_block_'+v.seatInfoId);}
+      }
+      if(unavailable.length){s.unavailableIds=unavailable;s.code='HTTP_SEAT_CHANGED';s.stage='release';}
+      else{s.statusCheckedAt=Date.now();s.stage='preselect';}
     }else if(s.stage==='preselect'){
       const v=s.records[s.held.length],el=document.getElementById('seat_block_'+v.seatInfoId);
-      if(!el?.matches('circle.js-seat[id]')||el.parentElement?.id!=='seat_block_'+v.blockKey||!shown(el)||/SeatMap_(?:disabled|selected)/.test(el.getAttribute('class')||'')){s.stage='release';s.code='HTTP_SEAT_CHANGED';}
+      if(!Number.isFinite(s.statusCheckedAt)||Date.now()-s.statusCheckedAt>20000)s.stage='status';
+      else if(el&&(!el.matches('circle.js-seat[id]')||el.parentElement?.id!=='seat_block_'+v.blockKey||/SeatMap_(?:disabled|selected)/.test(el.getAttribute('class')||''))){s.stage='release';s.code='HTTP_SEAT_CHANGED';s.unavailableIds=['seat_block_'+v.seatInfoId];}
       else{
-        const r=await request('/onestop/gql',gql('PreselectSeat','preselectSeat','PreselectSeatCommand',{playSeq:s.context.playSeq.playSeq,blockKey:v.blockKey,seatGrade:v.seatGrade,seatInfoId:v.seatInfoId}),{field:'preselectSeat',mutation:true});
+        const grouped=v.seatGroupId!=null,field=grouped?'bulkPreselectSeats':'preselectSeat';
+        const r=await request('/onestop/gql',gql(grouped?'BulkPreselectSeats':'PreselectSeat',field,grouped?'BulkPreselectSeatsCommand':'PreselectSeatCommand',{playSeq:s.context.playSeq.playSeq,blockKey:v.blockKey,seatGrade:v.seatGrade,...(grouped?{seatInfoIds:[v.seatInfoId]}:{seatInfoId:v.seatInfoId})}),{field,mutation:true});
         if(r.conflict){s.stage='release';s.code='HTTP_SEAT_CONFLICT';}
         else{s.held.push(v);check(true);saveSeats();if(s.held.length===1)sessionStorage.setItem('interpark/preReserveExpireTime',String(Date.now()+420000));check();if(s.held.length===s.records.length)s.stage=s.stopAfterSeats?'selected':'confirm';}
       }
@@ -971,7 +1151,7 @@ return Object.freeze({
       const discount=s.prices.some(v=>Number(v.pgPrice.discountSeq||0)>0&&!['PG003'].includes(v.pgPrice.pgCode)&&v.pgPrice.kindOfDiscount!=='34020'&&!(v.pgPrice.pgCode==='PG001'&&v.pgPrice.kindOfDiscount==='34004'));
       s.route=['26003282','26003294'].includes(c.goods.goodsCode)||c.goods.isPreOrder&&!discount?'/preorder':'/payment';s.stage='ready';
     }else if(s.stage==='release'){
-      if(s.held.length){const v=s.held.at(-1);await request('/onestop/gql',gql('DeselectSeat','deselectSeat','DeselectSeatCommand',{seatInfoId:v.seatInfoId}),{field:'deselectSeat',cleanup:true,mutation:true});check(true);s.held.pop();saveSeats();}
+      if(s.held.length){const v=s.held.at(-1),grouped=v.seatGroupId!=null,field=grouped?'bulkDeselectSeats':'deselectSeat';await request('/onestop/gql',gql(grouped?'BulkDeselectSeats':'DeselectSeat',field,grouped?'BulkDeselectSeatsCommand':'DeselectSeatCommand',grouped?{seatInfoIds:[v.seatInfoId]}:{seatInfoId:v.seatInfoId}),{field,cleanup:true,mutation:true});check(true);s.held.pop();saveSeats();}
       if(!s.held.length){sessionStorage.removeItem('interpark/preReserveExpireTime');s.stage='released';s.status='conflict';}
     }else throw Error('HTTP_STAGE_INVALID');
     receipt(s);
@@ -980,7 +1160,7 @@ return Object.freeze({
   return summary(s);
 },
 "page.stopWatchers":function stopWatchers(){if(window.__ticketDirectApi)window.__ticketDirectApi.cancelled=true;if(window.__ticketHttpBooking){window.__ticketHttpBooking.cancelled=true;try{const r=JSON.parse(sessionStorage.getItem("baseball/http-booking")||"null");if(r){r.cancelled=true;sessionStorage.setItem("baseball/http-booking",JSON.stringify(r));}}catch{}}window.__ticketSeatChanges?.stop();window.__bearsEntry?.stop();window.__bearsGate?.stop();window.__bearsCaptchaPage?.cancel();window.__ticketManualCaptchaPage?.cancel();return true;},
-"page.pageClock":function pageClock(){return {pageMono:performance.now(),documentId:window.__bearsGate?.status.documentId};},
+"page.pageClock":function pageClock({entryStage='gate'}={}){return {pageMono:performance.now(),documentId:(entryStage==='listing'?window.__bearsEntry:window.__bearsGate)?.status.documentId};},
 "page.gateSnapshot":function gateSnapshot(){return window.__bearsGate?.status||null;},
 "page.showAll":function showAll(){const b=[...document.querySelectorAll('button')].find(e=>e.textContent.trim()==='전체보기'&&e.getBoundingClientRect().width>0);if(!b)return true;return new Promise(resolve=>{let timer;const finish=()=>{clearTimeout(timer);observer.disconnect();resolve(true);};const observer=new MutationObserver(finish);observer.observe(b.parentElement||document.body,{subtree:true,childList:true,attributes:true});timer=setTimeout(finish,1500);siteInvoke(b);});},
 "page.gateState":function gateSnapshot(){return window.__bearsGate?.status||null;},

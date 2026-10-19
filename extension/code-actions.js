@@ -1,5 +1,5 @@
 'use strict';
-globalThis.BaseballCodeActions=new Set(["entry.prepareEntry","entry.gateStatus","entry.armGate","entry.setGateClock","entry.noteGateRequest","live.liveAction","flow.scene","flow.clickKnown","flow.enterCode","flow.deselect","flow.dismissConflict","flow.dismissEmptySelection","pricePage.adultPriceStep","pricePage.proceedBooking","pricePage.returnToSeats","captcha.captchaSnapshot","captcha.captchaSubmit","captcha.captchaStatus","captcha.captchaCancel","captcha.captchaRefresh","manualCaptcha.manualCaptchaPrepare","manualCaptcha.manualCaptchaSubmit","manualCaptcha.manualCaptchaCancel","page.pageClock","page.gateSnapshot","page.gateState","page.showAll","page.showAllGames","page.stopWatchers"]);
+globalThis.BaseballCodeActions=new Set(["entry.prepareEntry","entry.armListing","entry.setListingClock","entry.listingState","entry.stopListing","entry.gateStatus","entry.armGate","entry.setGateClock","entry.noteGateRequest","live.liveAction","flow.scene","flow.clickKnown","flow.enterCode","flow.deselect","flow.dismissConflict","flow.dismissEmptySelection","pricePage.adultPriceStep","pricePage.proceedBooking","pricePage.returnToSeats","captcha.captchaSnapshot","captcha.captchaSubmit","captcha.captchaStatus","captcha.captchaCancel","captcha.captchaRefresh","manualCaptcha.manualCaptchaPrepare","manualCaptcha.manualCaptchaSubmit","manualCaptcha.manualCaptchaCancel","page.pageClock","page.gateSnapshot","page.gateState","page.showAll","page.showAllGames","page.stopWatchers"]);
 globalThis.BaseballCodeDispatch=async function(action,arg,meta){
 const invokeSiteFunction=function invokeSiteFunction(element,kind='activate',value){
   const gateEntry=kind==='entry'&&location.origin==='https://tickets.interpark.com'&&/^\/gates\/ticket\/\d{8}\/?$/.test(location.pathname)&&/^(?:예매하기|남은시간\s*\d{1,2}:\d{2})$/.test(element?.textContent?.trim()||'');
@@ -134,6 +134,100 @@ const priceState=function priceState(){
   return {route,rejected:!!window.__ticketPriceRecovery,ready:!blocked&&groups.length>0&&quantity>0&&quantity<=4&&groups.every(g=>g.max>0&&g.seat&&g.items.length&&g.items.every(i=>Number.isInteger(i.count)&&i.count>=0)),groups,quantity};
 };
 return {
+"entry.armListing":function armListing({key,runId=null,clockRequired=false,timeoutMs=15*86400000}={}) {
+  if(typeof key!=='string'||!key.trim())throw Error('대상 경기 정보가 없습니다. 경기 목록을 다시 읽어 주세요.');
+  if(!Number.isFinite(timeoutMs)||timeoutMs<0)throw Error('경기 목록 대기 시간이 올바르지 않습니다.');
+  const previous=window.__bearsEntry;
+  // A failed/stopped run also retains its latch. Only a new run may retry it.
+  if(previous?.status?.key===key&&previous.status.runId===runId)return previous.status;
+  previous?.stop();
+  const started=performance.now(),sequence=(previous?.sequence||0)+1;
+  const currentUrl=()=>String(location.origin)+String(location.pathname)+String(location.search||'')+String(location.hash||'');
+  const startUrl=currentUrl(),control=window.__ticketSiteCode,epoch=control?.epoch;
+  const status={phase:'armed',key,runId,documentId:String(performance.timeOrigin)+':'+started+':listing:'+sequence,clock:{outcome:'not-configured'},trigger:null,enabledObservedMono:null,clickedMono:null,clickedAt:null,invokeDelayMs:null,reason:'선택한 경기의 예매 버튼 활성화를 기다립니다.'};
+  let observer,timer,clockTimer,done=false,cancelled=false;
+  const cleanup=()=>{clearTimeout(timer);clearTimeout(clockTimer);observer?.disconnect();};
+  const finish=(phase,reason)=>{status.phase=phase;status.reason=reason;done=true;cleanup();};
+  const stop=()=>{cancelled=true;done=true;cleanup();if(status.phase==='armed'){status.phase='stopped';status.reason='경기 목록 대기를 중지했습니다.';}};
+  const visible=element=>{
+    const rect=element.getBoundingClientRect(),css=getComputedStyle(element);
+    return element.isConnected!==false&&rect.width>0&&rect.height>0&&css.display!=='none'&&css.visibility!=='hidden'&&css.visibility!=='collapse';
+  };
+  const find=()=>[...document.querySelectorAll('button.grid-area_cta')].filter(button=>{
+    const card=button.parentElement,info=card?.querySelector('.grid-area_info')?.textContent?.trim();
+    const teams=[...(card?.querySelectorAll('.grid-area_match img[alt]')||[])].map(image=>image.alt).join(' vs ');
+    return !!info&&!!teams&&info+' | '+teams===key&&visible(button);
+  });
+  const wait=()=>{timer=setTimeout(()=>tick(),Math.max(1,Math.min(250,started+timeoutMs-performance.now())));};
+  const failed=()=>{
+    // The shared dispatcher stops observers before propagating site errors.
+    // Preserve that failure report while ignoring an explicit stop/new run.
+    const runtimeFailure=control&&window.__ticketSiteCode===control&&control.epoch===epoch&&control.error;
+    if(cancelled&&!runtimeFailure||window.__bearsEntry?.status!==status||status.phase!=='clicked')return;
+    finish(currentUrl()!==startUrl?'navigated':'blocked',currentUrl()!==startUrl?'화면이 이동하여 이전 경기 목록 실행을 종료했습니다.':'사이트 진입 함수 실행 결과를 확인하지 못했습니다. 경기 화면을 확인한 뒤 새로 시작해 주세요.');
+  };
+  const tick=(source='activation')=>{
+    if(done)return;
+    clearTimeout(timer);
+    const now=performance.now();
+    if(currentUrl()!==startUrl){finish('navigated','화면이 이동하여 경기 목록 대기를 종료했습니다.');return;}
+    if(now-started>=timeoutMs){finish('timeout','선택한 경기의 활성화 대기 시간이 지났습니다.');return;}
+    // Authentication/notice dialogs may temporarily hide the listing itself.
+    // Wait for their normal completion before deciding that a card was lost.
+    const modal=[...document.querySelectorAll('[role="dialog"], [aria-modal="true"], [aria-busy="true"]')].some(visible);
+    const notice=[...document.querySelectorAll('button')].some(button=>visible(button)&&String(button.textContent||'').trim()==='확인하고 예매하기');
+    if(modal||notice){status.reason='안내/인증/처리가 끝나기를 기다립니다.';wait();return;}
+    const matches=find();
+    if(matches.length!==1){finish('blocked',matches.length?'대상 경기의 보이는 예매 버튼이 여러 개입니다. 경기 목록을 다시 확인해 주세요.':'대상 경기의 보이는 예매 버튼을 찾을 수 없습니다. 경기 목록을 다시 확인해 주세요.');return;}
+    const button=matches[0];
+    const enabled=!button.disabled&&button.getAttribute('aria-disabled')!=='true'&&String(button.textContent||'').trim()==='예매하기';
+    if(enabled)status.enabledObservedMono??=now;
+    else status.enabledObservedMono=null;
+    const configured=Number.isFinite(status.clock.deadlineMono),clockValid=configured&&now<=status.clock.validUntilMono;
+    if(configured&&!clockValid)status.clock.outcome='stale';
+    if(clockRequired&&!clockValid){status.reason='유효한 서버 시각 설정을 기다립니다.';wait();return;}
+    if(clockValid&&now<status.clock.deadlineMono){status.reason='서버 시각의 예매 시작 시점을 기다립니다.';wait();return;}
+    if(clockValid&&status.clock.firedAtMono==null){status.clock.firedAtMono=now;status.clock.delayMs=now-status.clock.deadlineMono;status.clock.outcome='not-ready';}
+    if(!enabled){status.reason='선택한 경기의 예매 버튼 활성화를 기다립니다.';wait();return;}
+    // Acquire the latch before invoking a site function, which can itself
+    // synchronously mutate the DOM, navigate, throw, or return a rejection.
+    status.phase='clicked';status.trigger=source==='server-clock'?'server-clock':'activation';
+    status.clickedMono=performance.now();status.clickedAt=Date.now();status.invokeDelayMs=Math.max(0,status.clickedMono-status.enabledObservedMono);
+    if(clockValid)status.clock.outcome='clicked';
+    status.reason='활성화 확인 · 선택한 경기의 사이트 진입 함수 실행';done=true;cleanup();
+    try{Promise.resolve(siteInvoke(button)).catch(failed);}catch{failed();}
+  };
+  const setClock=config=>{
+    if(done||config?.runId!==runId||config?.documentId!==status.documentId||config?.key!==key)return false;
+    const {deadlineMono,validUntilMono,uncertaintyMs,openAt}=config;
+    if(config.source!=='ticket-server'||![deadlineMono,validUntilMono,uncertaintyMs,openAt].every(Number.isFinite)||uncertaintyMs<0||uncertaintyMs>501||validUntilMono<deadlineMono)return false;
+    clearTimeout(clockTimer);const clock={outcome:'armed',deadlineMono,validUntilMono,uncertaintyMs,openAt};status.clock=clock;
+    const fire=()=>{
+      if(done||status.clock!==clock)return;
+      const now=performance.now();
+      if(now>validUntilMono){status.clock.outcome='stale';tick();return;}
+      if(now<deadlineMono){clockTimer=setTimeout(fire,Math.ceil(deadlineMono-now));return;}
+      status.clock.firedAtMono=now;status.clock.delayMs=now-deadlineMono;status.clock.outcome='not-ready';tick('server-clock');
+    };
+    fire();return true;
+  };
+  observer=new MutationObserver(()=>tick());observer.observe(document.body,{subtree:true,childList:true,attributes:true,characterData:true});
+  window.__bearsEntry={status,stop,setClock,sequence};tick();return status;
+},
+"entry.setListingClock":function setListingClock(config){return window.__bearsEntry?.setClock?.(config)||false;},
+"entry.listingState":function listingState(){return window.__bearsEntry?.status||null;},
+"entry.stopListing":function stopListing({runId=null,key}={}){
+  if(typeof key!=='string'||!key.trim())return {stopped:false};
+  const listing=window.__bearsEntry;
+  if(!listing){
+    // A stop may arrive before its arm command. Retain the same-run latch
+    // so a delayed install cannot reintroduce a watcher after popup adoption.
+    const status={phase:'stopped',key,runId,documentId:String(performance.timeOrigin)+':'+performance.now()+':listing:1',clock:{outcome:'not-configured'},trigger:null,enabledObservedMono:null,clickedMono:null,clickedAt:null,invokeDelayMs:null,reason:'경기 목록 대기를 중지했습니다.'};
+    window.__bearsEntry={status,stop(){},sequence:1};return {stopped:true};
+  }
+  if(listing.status?.runId!==runId||listing.status?.key!==key||typeof listing.stop!=='function')return {stopped:false};
+  listing.stop();return {stopped:true};
+},
 "entry.prepareEntry":function prepareEntry({key,runId=null}) {
   const previous=window.__bearsEntry;
   if(previous?.status?.key===key&&previous.status.runId===runId&&previous.status.phase==='clicked')return previous.status;
@@ -160,12 +254,14 @@ return {
   if(!notices.length)delete window.__bearsBookingNotice;
   let noticeKey=null,container=notices.length===1?notices[0].parentElement:null;
   while(container&&container!==document.body){
-    const headings=[...container.querySelectorAll('h1,h2,h3,[role="heading"],[class*="title"],[class*="Title"]')].filter(visible).map(e=>e.textContent.replace(/\s/g,''));
+    const headings=[...container.querySelectorAll('h1,h2,h3,[role="heading"],[class*="title"],[class*="Title"],span,p,strong,b,div')].filter(visible).map(e=>e.textContent.replace(/\s/g,''));
     noticeKey=headings.find(text=>['예매안내','취소/환불안내'].includes(text))||null;
     if(noticeKey)break;
     container=container.parentElement;
   }
-  status.notice={present:notices.length>0,enabled:notices.length===1&&!notices[0].disabled&&notices[0].getAttribute('aria-disabled')!=='true',key:noticeKey};
+  let signature=null;
+  if(noticeKey){let hash=2166136261;for(const character of container.textContent.replace(/\s/g,''))hash=Math.imul(hash^character.codePointAt(0),16777619);signature=noticeKey+':'+(hash>>>0).toString(16);}
+  status.notice={present:notices.length>0,enabled:notices.length===1&&!notices[0].disabled&&notices[0].getAttribute('aria-disabled')!=='true',key:noticeKey,signature};
   const buttons=root?[...root.querySelectorAll('button')].filter(b=>visible(b)&&b.textContent.trim()!=='확인하고 예매하기'&&/(?:예매하기$|^남은시간\s*\d{1,2}:\d{2}$)/.test(b.textContent.trim())):[];
   if(!status.prepared||buttons.length!==1)return {...status,reason:'준비 완료 안내와 유일한 예매 버튼을 기다립니다.'};
   const button=buttons[0];status.buttonText=button.textContent.trim();
@@ -293,12 +389,14 @@ return {
   if(!notices.length)delete window.__bearsBookingNotice;
   let noticeKey=null,container=notices.length===1?notices[0].parentElement:null;
   while(container&&container!==document.body){
-    const headings=[...container.querySelectorAll('h1,h2,h3,[role="heading"],[class*="title"],[class*="Title"]')].filter(shown).map(e=>e.textContent.replace(/\s/g,''));
+    const headings=[...container.querySelectorAll('h1,h2,h3,[role="heading"],[class*="title"],[class*="Title"],span,p,strong,b,div')].filter(shown).map(e=>e.textContent.replace(/\s/g,''));
     noticeKey=headings.find(text=>['예매안내','취소/환불안내'].includes(text))||null;
     if(noticeKey)break;
     container=container.parentElement;
   }
-  return {completed:completed&&!busy&&![...document.querySelectorAll('img[alt="캡챠 이미지"]')].some(shown),busy,dialog,notice:{present:notices.length>0,enabled:notices.length===1&&!notices[0].disabled&&notices[0].getAttribute('aria-disabled')!=='true',key:noticeKey},captcha:[...document.querySelectorAll('img[alt="캡챠 이미지"],[class*="ModalCaptchaText_captchaImage__"] img')].some(shown),buttons,selected,grades,hasSeats:[...document.querySelectorAll('circle.js-seat[id]')].some(shown),selectedGrades:[...document.querySelectorAll('[class*="InfoSelected_contentSeatGrade__"]')].map(e=>e.textContent.trim()),selectedNames:[...document.querySelectorAll('[class*="InfoSelected_contentSeatName__"]')].map(e=>e.textContent.trim())};
+  let signature=null;
+  if(noticeKey){let hash=2166136261;for(const character of container.textContent.replace(/\s/g,''))hash=Math.imul(hash^character.codePointAt(0),16777619);signature=noticeKey+':'+(hash>>>0).toString(16);}
+  return {completed:completed&&!busy&&![...document.querySelectorAll('img[alt="캡챠 이미지"]')].some(shown),busy,dialog,notice:{present:notices.length>0,enabled:notices.length===1&&!notices[0].disabled&&notices[0].getAttribute('aria-disabled')!=='true',key:noticeKey,signature},captcha:[...document.querySelectorAll('img[alt="캡챠 이미지"],[class*="ModalCaptchaText_captchaImage__"] img')].some(shown),buttons,selected,grades,hasSeats:[...document.querySelectorAll('circle.js-seat[id]')].some(shown),selectedGrades:[...document.querySelectorAll('[class*="InfoSelected_contentSeatGrade__"]')].map(e=>e.textContent.trim()),selectedNames:[...document.querySelectorAll('[class*="InfoSelected_contentSeatName__"]')].map(e=>e.textContent.trim())};
 },
 "flow.clickKnown":function clickKnown(label){
   if(!['확인하고 예매하기','직접 좌석 선택하기','선택 완료','좌석도 전체보기'].includes(label))throw new Error('허용하지 않은 단계입니다.');
@@ -313,7 +411,7 @@ return {
     if(button.disabled||button.getAttribute('aria-disabled')==='true')return {present:true,clicked:false,disabled:true};
     let container=button.parentElement,key=null;
     while(container&&container!==document.body){
-      key=[...container.querySelectorAll('h1,h2,h3,[role="heading"],[class*="title"],[class*="Title"]')].filter(shown).map(e=>e.textContent.replace(/\s/g,'')).find(text=>['예매안내','취소/환불안내'].includes(text))||null;
+      key=[...container.querySelectorAll('h1,h2,h3,[role="heading"],[class*="title"],[class*="Title"],span,p,strong,b,div')].filter(shown).map(e=>e.textContent.replace(/\s/g,'')).find(text=>['예매안내','취소/환불안내'].includes(text))||null;
       if(key)break;
       container=container.parentElement;
     }
@@ -334,12 +432,14 @@ return {
     };
     const otherModal=[...document.querySelectorAll('[role="dialog"],[role="alertdialog"],[aria-modal="true"]')].some(e=>shown(e)&&e!==container&&!e.contains(button)&&!gradeSheet(e));
     if(protectedText||inputs||otherModal)throw Error('인증·동의 또는 다른 안내가 함께 표시되어 자동으로 확인하지 않습니다.');
-    const clickedKeys=window.__bearsBookingNotice?.clickedKeys||[];
-    if(clickedKeys.includes(key))return {present:true,clicked:false,pending:true,key};
-    // Latch each recognized notice before invoking site code. DOM replacement
-    // cannot repeat it, while a different notice in this document can continue.
-    window.__bearsBookingNotice={clicked:true,clickedAt:Date.now(),clickedKeys:[...clickedKeys,key]};
-    siteInvoke(button);return {present:true,clicked:true,key};
+    let hash=2166136261;for(const character of text.replace(/\s/g,''))hash=Math.imul(hash^character.codePointAt(0),16777619);
+    const signature=key+':'+(hash>>>0).toString(16),previous=window.__bearsBookingNotice,clickedKeys=previous?.clickedKeys||[],clickedSignatures=previous?.clickedSignatures||[];
+    if(clickedSignatures.includes(signature)||previous&&!previous.clickedSignatures&&clickedKeys.includes(key))return {present:true,clicked:false,pending:true,key,signature};
+    // Consecutive notices can share a title (for example, seat-view guidance).
+    // Latch their normalized contents, so DOM replacement/spacing cannot repeat
+    // the same notice while a distinct, revalidated notice can continue.
+    window.__bearsBookingNotice={clicked:true,clickedAt:Date.now(),clickedKeys:[...new Set([...clickedKeys,key])],clickedSignatures:[...clickedSignatures,signature]};
+    siteInvoke(button);return {present:true,clicked:true,key,signature};
   }
   const matches=[...document.querySelectorAll('button')].filter(e=>(e.textContent.trim()||e.getAttribute('aria-label'))===label&&e.getBoundingClientRect().width>0&&!e.disabled&&e.getAttribute('aria-disabled')!=='true');
   if(matches.length!==1)throw new Error('다음 단계 버튼을 찾을 수 없습니다.');
@@ -656,7 +756,7 @@ return {
   recovery.backSent=true;siteInvoke(buttons[0]);return {pending:true};
 },
 "page.stopWatchers":function stopWatchers(){if(window.__ticketDirectApi)window.__ticketDirectApi.cancelled=true;if(window.__ticketHttpBooking){window.__ticketHttpBooking.cancelled=true;try{const r=JSON.parse(sessionStorage.getItem("baseball/http-booking")||"null");if(r){r.cancelled=true;sessionStorage.setItem("baseball/http-booking",JSON.stringify(r));}}catch{}}window.__ticketSeatChanges?.stop();window.__bearsEntry?.stop();window.__bearsGate?.stop();window.__bearsCaptchaPage?.cancel();window.__ticketManualCaptchaPage?.cancel();return true;},
-"page.pageClock":function pageClock(){return {pageMono:performance.now(),documentId:window.__bearsGate?.status.documentId};},
+"page.pageClock":function pageClock({entryStage='gate'}={}){return {pageMono:performance.now(),documentId:(entryStage==='listing'?window.__bearsEntry:window.__bearsGate)?.status.documentId};},
 "page.gateSnapshot":function gateSnapshot(){return window.__bearsGate?.status||null;},
 "page.showAll":function showAll(){const b=[...document.querySelectorAll('button')].find(e=>e.textContent.trim()==='전체보기'&&e.getBoundingClientRect().width>0);if(!b)return true;return new Promise(resolve=>{let timer;const finish=()=>{clearTimeout(timer);observer.disconnect();resolve(true);};const observer=new MutationObserver(finish);observer.observe(b.parentElement||document.body,{subtree:true,childList:true,attributes:true});timer=setTimeout(finish,1500);siteInvoke(b);});},
 "page.gateState":function gateSnapshot(){return window.__bearsGate?.status||null;},

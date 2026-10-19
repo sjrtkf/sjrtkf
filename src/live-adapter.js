@@ -2,14 +2,28 @@
 // Observed 2026-09-10 on tickets.interpark.com/onestop/seat.
 // The current DOM is the authority for availability; events target seat IDs.
 function liveRead() {
+  const visible = el => {const r=el.getBoundingClientRect();const s=getComputedStyle(el);return r.width>0&&r.height>0&&s.visibility==='visible'&&s.display!=='none';};
   if(typeof window!=='undefined'&&typeof MutationObserver==='function'&&document.body&&!window.__ticketSeatChanges){
-    const state={revision:0,listeners:new Set()};
-    state.observer=new MutationObserver(()=>{state.revision++;for(const fn of [...state.listeners])fn();});
-    state.observer.observe(document.body,{subtree:true,childList:true,characterData:true,attributes:true,attributeFilter:['class','disabled','aria-disabled','aria-busy','style']});
+    // A countdown, animation, or identical React render is not new inventory.
+    // Compare only visible seats, grade inventory and blockers/navigation that
+    // can actually change the next step. Do not wake on every body mutation.
+    const signature=()=>JSON.stringify([
+      [...document.querySelectorAll('circle.js-seat[id]')].map(e=>[e.id,e.parentElement?.id,/SeatMap_disabled/.test(e.getAttribute('class')||''),/SeatMap_selected/.test(e.getAttribute('class')||''),e.getAttribute('fill'),e.getAttribute('cx'),e.getAttribute('cy'),visible(e)]),
+      [...document.querySelectorAll('button[class*="SportsSeatGradeList_contentItem__"]')].map(e=>[e.querySelector('[class*="SportsSeatGradeList_contentGradeName__"]')?.textContent?.trim(),e.querySelector('[class*="SportsSeatGradeList_contentRemainCount__"]')?.textContent?.trim(),!!e.disabled,e.getAttribute('aria-disabled'),visible(e)]),
+      [...document.querySelectorAll('img[alt="캡챠 이미지"],[class*="ModalCaptchaText_captchaImage__"],[role="alertdialog"],[role="dialog"][aria-modal="true"],[aria-busy="true"],[class*="EntLoading_wrap__"],[class*="EntEntryLoading_wrap__"]')].map(e=>visible(e)),
+      [...document.querySelectorAll('button')].filter(e=>['확인하고 예매하기','직접 좌석 선택하기','좌석도 전체보기','선택 완료'].includes(e.textContent.trim())).map(e=>[e.textContent.trim(),!!e.disabled,e.getAttribute('aria-disabled'),visible(e)])
+    ]);
+    const tracked='circle[id],button,img[alt="캡챠 이미지"],[class*="ModalCaptchaText_captchaImage__"],[role="alertdialog"],[role="dialog"][aria-modal="true"],[aria-busy="true"],[class*="EntLoading_wrap__"],[class*="EntEntryLoading_wrap__"]';
+    const touches=node=>{const e=node?.nodeType===1?node:node?.parentElement;return !!(e?.closest?.(tracked)||e?.querySelector?.(tracked));};
+    const state={revision:0,listeners:new Set(),signature:signature()};
+    state.observer=new MutationObserver(records=>{
+      if(records?.length&&!records.some(r=>touches(r.target)||[...(r.addedNodes||[]),...(r.removedNodes||[])].some(touches)))return;
+      const next=signature();if(next===state.signature)return;state.signature=next;state.revision++;for(const fn of [...state.listeners])fn();
+    });
+    state.observer.observe(document.body,{subtree:true,childList:true,characterData:true,attributes:true,attributeFilter:['class','disabled','aria-disabled','aria-busy','style','hidden','aria-hidden','id','fill','cx','cy']});
     state.stop=()=>{state.observer.disconnect();for(const fn of [...state.listeners])fn(true);delete window.__ticketSeatChanges;};
     window.__ticketSeatChanges=state;
   }
-  const visible = el => {const r=el.getBoundingClientRect();const s=getComputedStyle(el);return r.width>0&&r.height>0&&s.visibility==='visible'&&s.display!=='none';};
   if(document.querySelector('img[alt="캡챠 이미지"]')) return {rows:[],message:'보안문자를 먼저 입력해 주세요.'};
   const circles=[...document.querySelectorAll('circle.js-seat[id]')];
   const rows=[];
@@ -51,7 +65,7 @@ function supportedUrl(value){try{const u=new URL(value);return u.origin==='https
 function waitForChange({revision,timeoutMs=3500}={}){
   const state=window.__ticketSeatChanges;
   if(!state||state.revision!==revision)return Promise.resolve({changed:true});
-  const delay=Math.min(4000,Math.max(1,Number(timeoutMs)||3500));
+  const delay=Math.min(5000,Math.max(1,Number(timeoutMs)||3500));
   return new Promise(resolve=>{let timer;const done=stopped=>{clearTimeout(timer);state.listeners.delete(done);resolve({changed:state.revision!==revision,stopped:stopped===true,revision:state.revision});};state.listeners.add(done);timer=setTimeout(done,delay);if(state.revision!==revision)done();});
 }
 module.exports={liveRead,liveAction,waitForChange,readScript,clickScript,supportedUrl};

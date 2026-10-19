@@ -1,5 +1,6 @@
 'use strict';
 const {readBookingContext}=require('./booking-context');
+const {parseSeatLabels}=require('./metadata');
 
 // Mirrors the normal price-page data contract, not a DOM quantity control.
 // Ordinary adult prices only; membership, voucher and certified discounts stop.
@@ -37,8 +38,8 @@ async function httpBookingAction(arg={}){
   const context=()=>readBookingContext().context;
   const identity=c=>['goodsCode','placeCode'].map(k=>c.goods?.[k]).concat(c.playSeq?.playSeq).join(':');
   const fingerprint=c=>JSON.stringify([c.goods,c.playSeq,c.sessionId,c.channelType,c.bizCode,c.seats||[],c.prices||[]]);
-  const receipt=s=>sessionStorage.setItem(KEY,JSON.stringify({runId:s.runId,identity:s.identity,sessionId:s.context.sessionId,contextSignature:s.expected,stage:s.stage,held:s.held.map(v=>v.seatInfoId),seatsSignature:JSON.stringify(s.held),pricesSignature:JSON.stringify(s.prices||[]),confirmed:s.confirmed===true,validated:s.validated===true,route:s.route||null,cancelled:s.cancelled===true,at:Date.now()}));
-  const summary=s=>({stage:s.stage,status:s.status||'pending',code:s.code||null,httpStatus:s.httpStatus||null,apiCode:s.apiCode||null,heldCount:s.held.length,confirmed:s.confirmed===true,validated:s.validated===true,requestCount:s.requestCount,route:s.route||null});
+  const receipt=s=>sessionStorage.setItem(KEY,JSON.stringify({runId:s.runId,identity:s.identity,sessionId:s.context.sessionId,contextSignature:s.expected,stage:s.stage,held:s.held.map(v=>v.seatInfoId),seatsSignature:JSON.stringify(s.held),pricesSignature:JSON.stringify(s.prices||[]),confirmed:s.confirmed===true,validated:s.validated===true,route:s.route||null,cancelled:s.cancelled===true,mutationStarted:s.mutationStarted,at:Date.now()}));
+  const summary=s=>({stage:s.stage,status:s.status||'pending',code:s.code||null,httpStatus:s.httpStatus||null,apiCode:s.apiCode||null,heldCount:s.held.length,confirmed:s.confirmed===true,validated:s.validated===true,requestCount:s.requestCount,route:s.route||null,...(s.changedIds?{changedIds:s.changedIds}:{}),...(s.unavailableIds?{unavailableIds:s.unavailableIds}:{})});
   let s=window.__ticketHttpBooking;
   if(arg.action==='begin'){
     if(typeof arg.runId!=='string'||arg.runId.length>120||!Number.isFinite(arg.expiresAt)||Date.now()>arg.expiresAt)throw Error('HTTP_COMMAND_EXPIRED');
@@ -47,7 +48,10 @@ async function httpBookingAction(arg={}){
     const c=context();
     const resumeSelected=arg.resumeSelected===true;
     const selectedReceipt=resumeSelected&&old?.stage==='selected'&&old.sessionId===c.sessionId&&old.seatsSignature===JSON.stringify(c.seats);
-    if(s?.pending||!selectedReceipt&&(s?.held?.length&&s.context.sessionId===c.sessionId||old&&old.sessionId===c.sessionId&&!['released','rejected'].includes(old.stage)))throw Error('HTTP_PREVIOUS_RESULT_PENDING');
+    // Only an explicit persisted proof that no mutation started permits a
+    // cancelled read-only attempt to restart. Older/unknown receipts stay locked.
+    const cancelledReadOnly=old?.cancelled===true&&old.mutationStarted===false&&Array.isArray(old.held)&&old.held.length===0&&old.confirmed===false&&old.validated===false&&['metadata','prices','status','preselect'].includes(old.stage);
+    if(s?.pending||!selectedReceipt&&(s?.held?.length&&s.context.sessionId===c.sessionId||old&&old.sessionId===c.sessionId&&!cancelledReadOnly&&!['released','rejected'].includes(old.stage)))throw Error('HTTP_PREVIOUS_RESULT_PENDING');
     if(!arg.expected||identity(c)!==[arg.expected.goodsCode,arg.expected.placeCode,arg.expected.playSeq].join(':'))throw Error('HTTP_IDENTITY_CHANGED');
     if(c.goods?.isInterlocking!==false||c.goods?.reserved!==true||c.goods?.reservedSeat===false||c.nonReservedSeatGrade||c.channelType&&c.channelType!=='NOL'||c.partnerInfo&&Object.keys(c.partnerInfo).length||c.goods?.nonReservedGoodsCode)throw Error('HTTP_SEAT_SYSTEM_UNSUPPORTED');
     if((c.prices||[]).some(p=>p.selectedSeatCount>0))throw Error('HTTP_EXISTING_PRICE_SELECTION');
@@ -59,12 +63,12 @@ async function httpBookingAction(arg={}){
     if(resume&&new URL(location.href).searchParams.get('step')!=='price')throw Error('HTTP_PRICE_PAGE_REQUIRED');
     for(const v of seats)if(typeof v.id!=='string'||!v.id.startsWith('seat_block_'+c.goods.goodsCode+':'+c.goods.placeCode+':')||typeof v.blockKey!=='string'||!/^\d+$/.test(String(v.gradeCode)))throw Error('HTTP_SEAT_CODE_INVALID');
     if(resumeSelected&&(!Array.isArray(c.seats)||c.seats.length!==seats.length||c.seats.some(v=>!seats.some(w=>w.id==='seat_block_'+v.seatInfoId&&String(w.gradeCode)===String(v.seatGrade)))))throw Error('HTTP_EXISTING_SELECTION_MISMATCH');
-    s={runId:arg.runId,identity:identity(c),context:c,expected:fingerprint(c),expiresAt:arg.expiresAt,seats,blocks:[...new Set(seats.map(v=>v.blockKey))],records:[],held:resume||resumeSelected?[...c.seats]:[],resume,resumeSelected,stopAfterSeats:arg.stopAfterSeats===true,confirmed:resume,stage:resume?'prices':'metadata',requestCount:0,cancelled:false};
+    s={runId:arg.runId,identity:identity(c),context:c,expected:fingerprint(c),expiresAt:arg.expiresAt,seats,blocks:[...new Set(seats.map(v=>v.blockKey))],metadataOrder:{},records:[],held:resume||resumeSelected?[...c.seats]:[],resume,resumeSelected,stopAfterSeats:arg.stopAfterSeats===true,confirmed:resume,stage:resume?'prices':'metadata',requestCount:0,cancelled:false,mutationStarted:resume||resumeSelected};
     window.__ticketHttpBooking=s;receipt(s);return summary(s);
   }
   if(!s||s.runId!==arg.runId)throw Error('HTTP_RUN_MISMATCH');
   if(arg.action==='status')return summary(s);
-  if(arg.action==='cancel'){s.cancelled=true;receipt(s);return summary(s);}
+  if(arg.action==='cancel'){s.cancelled=true;if(!s.pending&&s.mutationStarted===false&&!s.held.length){s.stage='rejected';s.status='blocked';s.code='HTTP_CANCELLED';}receipt(s);return summary(s);}
   if(arg.action!=='step')throw Error('HTTP_ACTION_UNSUPPORTED');
   if(s.pending)return summary(s);
   if(s.status||['ready','selected'].includes(s.stage))return summary(s);
@@ -86,7 +90,7 @@ async function httpBookingAction(arg={}){
   const request=async(url,body,{field,cleanup=false,mutation=false}={})=>{
     const c=check(cleanup),headers={'Content-Type':'application/json','X-Onestop-Channel':c.channelType||'NOL','X-Onestop-Session':c.sessionId,'X-Ticket-BFF-Language':({ko:'KO',en:'EN',ja:'JA',zh:'ZH'})[c.lang||'ko']||'KO','X-OneStop-Trace-ID':crypto.randomUUID().replaceAll('-','').slice(0,16)};
     if(url==='/onestop/gql'&&c.goods.preOpt)headers.Authorization='Bearer '+c.goods.preOpt;else headers['X-Requested-With']='XMLHttpRequest';
-    s.requestCount++;s.inFlightMutation=mutation;s.httpStatus=null;s.apiCode=null;receipt(s);
+    s.requestCount++;s.inFlightMutation=mutation;if(mutation)s.mutationStarted=true;s.httpStatus=null;s.apiCode=null;receipt(s);
     let response,data;
     try{response=await fetch(url,{method:body?'POST':'GET',credentials:'same-origin',cache:'no-store',redirect:'error',headers,...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(7500)});const text=await response.text();if(text.length>12000000)throw Error();data=JSON.parse(text);}catch{throw Error(mutation?'HTTP_OUTCOME_UNKNOWN':'HTTP_READ_FAILED');}
     s.httpStatus=response.status;
@@ -106,22 +110,58 @@ async function httpBookingAction(arg={}){
       const blocks=s.blocks.splice(0,2),c=s.context,params=new URLSearchParams({goodsCode:c.goods.goodsCode,placeCode:c.goods.placeCode,playSeq:c.playSeq.playSeq,bizCode:c.bizCode||'WEBBR'});blocks.forEach(k=>params.append('blockKeys',k));
       const {data}=await request('/onestop/api/seatMeta?'+params);check();const list=Array.isArray(data)?data:data?.data;
       if(!Array.isArray(list)||list.length!==blocks.length||new Set(list.map(b=>b.blockKey)).size!==blocks.length)throw Error('HTTP_METADATA_MISMATCH');
+      for(const blockKey of blocks){const block=list.find(v=>v.blockKey===blockKey);if(!Array.isArray(block?.seats)||!block.seats.length||block.seats.some(v=>typeof v?.seatInfoId!=='string')||new Set(block.seats.map(v=>v.seatInfoId)).size!==block.seats.length)throw Error('HTTP_METADATA_MISMATCH');s.metadataOrder[blockKey]=block.seats.map(v=>v.seatInfoId);}
       for(const wanted of s.seats.filter(v=>blocks.includes(v.blockKey))){
         const block=list.find(v=>v.blockKey===wanted.blockKey),found=block?.seats?.filter(v=>v.seatInfoId===wanted.id.slice(11));
-        if(found?.length!==1)throw Error('HTTP_METADATA_MISMATCH');const v=found[0];
-        if(String(v.seatGrade)!==String(wanted.gradeCode)||v.isExposable!==true||v.seatGroupId!=null||v.rowIdx!==wanted.rowIdx||v.colIdx!==wanted.colIdx||String(v.seatNo).replace(/번$/,'')!==String(wanted.number))throw Error('HTTP_METADATA_MISMATCH');
+        if(found?.length!==1){s.changedIds=[wanted.id];throw Error('HTTP_METADATA_CHANGED');}const v=found[0];
+        // The observed wheelchair map uses block / Wn-1 labels and a group
+        // containing exactly one seat. Recheck the complete returned metadata;
+        // neither a cached flag nor the group ID suffix alone authorizes it.
+        const blockLabel=wanted.blockKey.split(':').pop();
+        const singleton=s.seats.length===1&&wanted.singletonGroup===true&&wanted.labelFormat==='wheelchair-block'&&wanted.groupSize===1&&wanted.grouped===true&&wanted.exposable===true
+          &&typeof v.seatGradeName==='string'&&/휠체어|장애인/.test(v.seatGradeName)&&/^\d+$/.test(blockLabel)&&wanted.block===blockLabel
+          &&wanted.rawRowLabel===v.rowNo&&v.rowNo===blockLabel+'블록'&&wanted.rawSeatNumber===v.seatNo&&typeof v.seatNo==='string'&&v.seatNo.length<=80&&/^W[1-9]\d*-1$/.test(v.seatNo)
+          &&wanted.row===null&&wanted.number===null&&wanted.seatGroupId===v.seatGroupId&&v.seatGroupId===v.seatInfoId+'::1::1'
+          &&Number.isSafeInteger(v.rowIdx)&&v.rowIdx>=0&&Number.isSafeInteger(v.colIdx)&&v.colIdx>=0
+          &&list.flatMap(b=>Array.isArray(b?.seats)?b.seats:[]).filter(member=>member?.seatGroupId===v.seatGroupId).length===1;
+        const labels=parseSeatLabels(v.rowNo,v.seatNo),sameLabels=Number.isSafeInteger(labels.row)&&Number.isSafeInteger(labels.number)&&labels.row===wanted.row&&labels.rowLabel===wanted.rowLabel&&labels.rowKind===wanted.rowKind&&labels.number===wanted.number;
+        // A per-seat name overrides a shared grade-code label. Preserve the
+        // established missing-name fallback, but re-rank a changed explicit
+        // name so restricted/obstructed and area filters run on fresh metadata.
+        const gradeKey=value=>typeof value==='string'?value.normalize('NFKC').replace(/\s+/g,'').toLowerCase():null;
+        const nameChanged=v.seatGradeName!=null&&v.seatGradeName!==''&&(!gradeKey(v.seatGradeName)||gradeKey(v.seatGradeName)!==gradeKey(wanted.grade));
+        if(String(v.seatGrade)!==String(wanted.gradeCode)||v.isExposable!==true||v.rowIdx!==wanted.rowIdx||v.colIdx!==wanted.colIdx
+          ||nameChanged||(v.seatGroupId!=null?!singleton:wanted.singletonGroup===true||!sameLabels)){s.changedIds=[wanted.id];throw Error('HTTP_METADATA_CHANGED');}
         const fields=['seatInfoId','seatGrade','seatGradeName','salesPrice','floor','rowNo','seatNo','posLeft','posTop','isExposable','rowIdx','colIdx','seatGroupId'];
         s.records.push({...Object.fromEntries(fields.filter(k=>v[k]!==undefined).map(k=>[k,v[k]])),blockKey:wanted.blockKey,seatGrade:String(v.seatGrade),seatGradeName:v.seatGradeName||wanted.grade,isSelectable:true});
       }
-      if(!s.blocks.length)s.stage=s.stopAfterSeats?'preselect':'prices';
+      if(!s.blocks.length)s.stage=s.resumeSelected?'prices':s.stopAfterSeats?'status':'prices';
     }else if(s.stage==='prices'){
       const c=s.context,params=new URLSearchParams({placeCode:c.goods.placeCode,playSeq:c.playSeq.playSeq,bizCode:c.bizCode||'',entMemberCode:c.entMemberCode||'',seatType:c.goods.kindOfGoods==='01007'&&c.goods.isSportsGroup?'SPORTS':'DEFAULT',seatGrade:s.seats.map(v=>v.gradeCode).join(',')});
-      const {data}=await request('/onestop/api/prices/'+c.goods.goodsCode+'?'+params);check();s.prices=planAdultPrices(data,s.resume?s.held:s.records);s.stage=s.resume?'validate':s.resumeSelected?'confirm':'preselect';
+      const {data}=await request('/onestop/api/prices/'+c.goods.goodsCode+'?'+params);check();s.prices=planAdultPrices(data,s.resume?s.held:s.records);s.stage=s.resume?'validate':s.resumeSelected?'confirm':'status';
+    }else if(s.stage==='status'){
+      // The native client indexes MSB-first hex status bits by the complete,
+      // unfiltered seatMeta order. This also validates seats outside the viewport.
+      const remaining=s.records.filter(v=>!s.held.some(h=>h.seatInfoId===v.seatInfoId)),blocks=[...new Set(remaining.map(v=>v.blockKey))],c=s.context;
+      const params=new URLSearchParams({goodsCode:c.goods.goodsCode,placeCode:c.goods.placeCode,playSeq:c.playSeq.playSeq,bizCode:c.bizCode||'WEBBR'});blocks.forEach(k=>params.append('blockKeys',k));
+      const {data}=await request('/onestop/api/seatStatus?'+params);check();
+      if(!Array.isArray(data?.data)||data.data.length!==blocks.length)throw Error('HTTP_SEAT_STATUS_INVALID');
+      const unavailable=[];
+      for(let i=0;i<blocks.length;i++){
+        const blockKey=blocks[i],ids=s.metadataOrder[blockKey],hex=data.data[i];
+        if(!Array.isArray(ids)||typeof hex!=='string'||!/^[0-9a-f]+$/i.test(hex)||hex.length!==Math.ceil(ids.length/4))throw Error('HTTP_SEAT_STATUS_INVALID');
+        const bits=[...hex].map(v=>parseInt(v,16).toString(2).padStart(4,'0')).join('');
+        for(const v of remaining.filter(v=>v.blockKey===blockKey)){const index=ids.indexOf(v.seatInfoId);if(index<0)throw Error('HTTP_SEAT_STATUS_INVALID');if(bits[index]!=='1')unavailable.push('seat_block_'+v.seatInfoId);}
+      }
+      if(unavailable.length){s.unavailableIds=unavailable;s.code='HTTP_SEAT_CHANGED';s.stage='release';}
+      else{s.statusCheckedAt=Date.now();s.stage='preselect';}
     }else if(s.stage==='preselect'){
       const v=s.records[s.held.length],el=document.getElementById('seat_block_'+v.seatInfoId);
-      if(!el?.matches('circle.js-seat[id]')||el.parentElement?.id!=='seat_block_'+v.blockKey||!shown(el)||/SeatMap_(?:disabled|selected)/.test(el.getAttribute('class')||'')){s.stage='release';s.code='HTTP_SEAT_CHANGED';}
+      if(!Number.isFinite(s.statusCheckedAt)||Date.now()-s.statusCheckedAt>20000)s.stage='status';
+      else if(el&&(!el.matches('circle.js-seat[id]')||el.parentElement?.id!=='seat_block_'+v.blockKey||/SeatMap_(?:disabled|selected)/.test(el.getAttribute('class')||''))){s.stage='release';s.code='HTTP_SEAT_CHANGED';s.unavailableIds=['seat_block_'+v.seatInfoId];}
       else{
-        const r=await request('/onestop/gql',gql('PreselectSeat','preselectSeat','PreselectSeatCommand',{playSeq:s.context.playSeq.playSeq,blockKey:v.blockKey,seatGrade:v.seatGrade,seatInfoId:v.seatInfoId}),{field:'preselectSeat',mutation:true});
+        const grouped=v.seatGroupId!=null,field=grouped?'bulkPreselectSeats':'preselectSeat';
+        const r=await request('/onestop/gql',gql(grouped?'BulkPreselectSeats':'PreselectSeat',field,grouped?'BulkPreselectSeatsCommand':'PreselectSeatCommand',{playSeq:s.context.playSeq.playSeq,blockKey:v.blockKey,seatGrade:v.seatGrade,...(grouped?{seatInfoIds:[v.seatInfoId]}:{seatInfoId:v.seatInfoId})}),{field,mutation:true});
         if(r.conflict){s.stage='release';s.code='HTTP_SEAT_CONFLICT';}
         else{s.held.push(v);check(true);saveSeats();if(s.held.length===1)sessionStorage.setItem('interpark/preReserveExpireTime',String(Date.now()+420000));check();if(s.held.length===s.records.length)s.stage=s.stopAfterSeats?'selected':'confirm';}
       }
@@ -135,7 +175,7 @@ async function httpBookingAction(arg={}){
       const discount=s.prices.some(v=>Number(v.pgPrice.discountSeq||0)>0&&!['PG003'].includes(v.pgPrice.pgCode)&&v.pgPrice.kindOfDiscount!=='34020'&&!(v.pgPrice.pgCode==='PG001'&&v.pgPrice.kindOfDiscount==='34004'));
       s.route=['26003282','26003294'].includes(c.goods.goodsCode)||c.goods.isPreOrder&&!discount?'/preorder':'/payment';s.stage='ready';
     }else if(s.stage==='release'){
-      if(s.held.length){const v=s.held.at(-1);await request('/onestop/gql',gql('DeselectSeat','deselectSeat','DeselectSeatCommand',{seatInfoId:v.seatInfoId}),{field:'deselectSeat',cleanup:true,mutation:true});check(true);s.held.pop();saveSeats();}
+      if(s.held.length){const v=s.held.at(-1),grouped=v.seatGroupId!=null,field=grouped?'bulkDeselectSeats':'deselectSeat';await request('/onestop/gql',gql(grouped?'BulkDeselectSeats':'DeselectSeat',field,grouped?'BulkDeselectSeatsCommand':'DeselectSeatCommand',grouped?{seatInfoIds:[v.seatInfoId]}:{seatInfoId:v.seatInfoId}),{field,cleanup:true,mutation:true});check(true);s.held.pop();saveSeats();}
       if(!s.held.length){sessionStorage.removeItem('interpark/preReserveExpireTime');s.stage='released';s.status='conflict';}
     }else throw Error('HTTP_STAGE_INVALID');
     receipt(s);
