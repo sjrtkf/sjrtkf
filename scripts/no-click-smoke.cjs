@@ -37,7 +37,7 @@ app.whenReady().then(async()=>{
    for(const [key,value] of Object.entries(identity))assert.equal(u.searchParams.get(key),value);
    result={data:['c']};
   }
-  else if(p==='/onestop/api/prices/'+identity.goodsCode)result={prices:[{seatGrade:'1',ticketMaxCount:4,priceList:[{seatGrade:'1',pgCode:'PG002',priceGrade:'A',priceGradeName:'예매가',discountName:'성인',salesPrice:10000,discountSalesPrice:10000,priceMaxCount:4}]}]};
+  else if(p==='/onestop/api/prices/'+identity.goodsCode)result={prices:[{seatGrade:'1',ticketMaxCount:4,priceList:[{seatGrade:'1',pgCode:'PG002',priceGrade:'A',priceGradeName:'일반가',discountName:'',salesPrice:10000,discountSalesPrice:10000,priceMaxCount:4}]}]};
   else if(p==='/onestop/api/seats/select')result={unselectableSeatInfoIds:[]};
   else if(p==='/onestop/gql'&&body?.operationName==='PreselectSeat')result={data:{preselectSeat:true}};
   else if(p==='/onestop/gql'&&body?.operationName==='ValidatePricingSelection')result={data:{validatePricingSelection:true}};
@@ -85,9 +85,10 @@ app.whenReady().then(async()=>{
  let status=await http({action:'begin',expected:identity,seats,quantity:2,expiresAt:Date.now()+15000});
  for(let i=0;i<15&&status.stage!=='ready';i++){assert.equal(status.status,'pending');status=await http({action:'step'});}
  assert.equal(status.stage,'ready');assert.equal(status.requestCount,7);assert.equal(requests.filter(r=>r.path==='/onestop/api/seatStatus').length,1);
+ assert.equal(status.priceAssessment.groups[0].selectedIndex,0);assert.equal(status.priceAssessment.groups[0].options[0].priceGradeName,'일반가');
  await wc.executeJavaScript(fs.readFileSync(path.join(root,'extension/http-navigation.js'),'utf8')+'\nvoid 0;');
  await wc.executeJavaScript(`BaseballHttpNavigate(${JSON.stringify({runId:'http-smoke',expected:identity,expiresAt:Date.now()+5000})})`);
  assert.equal(new URL(wc.getURL()).pathname,'/onestop/payment');assert.equal(await wc.executeJavaScript('fixture.events'),0);
  verifyWindow('fixture payment destination');
- Object.assign(report,{passed:true,minimized:win.isMinimized(),visible:win.isVisible(),domInputEvents:0,preparationRequests:1,queueEntryRequests:1,captchaImages:images,captchaVerifications:verifications,seatPriceRequests:7,seatStatusRequests:1,requests:requests.length,liveSite:false,destination:'/payment'});
+ Object.assign(report,{passed:true,minimized:win.isMinimized(),visible:win.isVisible(),domInputEvents:0,preparationRequests:1,queueEntryRequests:1,captchaImages:images,captchaVerifications:verifications,seatPriceRequests:7,seatStatusRequests:1,standardPriceName:'일반가',requests:requests.length,liveSite:false,destination:'/payment'});
 }).then(()=>finish(),finish);

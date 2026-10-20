@@ -1,10 +1,10 @@
 'use strict';
 const {test}=require('node:test'),assert=require('node:assert/strict'),vm=require('node:vm');
-const {httpBookingAction,httpBookingNavigate,planAdultPrices}=require('../src/http-booking');
+const {httpBookingAction,httpBookingNavigate,planStandardPrices}=require('../src/http-booking');
 const {readBookingContext}=require('../src/booking-context');
 const {parseSeatLabels}=require('../src/metadata');
 const identity={goodsCode:'26009123',placeCode:'25001730',playSeq:'001'};
-const price={seatGrade:'1',pgCode:'PG002',priceGrade:'A',priceGradeName:'예매가',discountName:'성인',salesPrice:'10000',discountSalesPrice:'10000',priceMaxCount:4,discountSeq:'0'};
+const price={seatGrade:'1',pgCode:'PG002',priceGrade:'A',priceGradeName:'기본 입장권',discountName:'',salesPrice:'10000',discountSalesPrice:'10000',priceMaxCount:4,discountSeq:'0'};
 function fixture(options={}){
   const initial={sessionId:'private-session',channelType:'NOL',bizCode:'WEBBR',entMemberCode:'private-member',goods:{...identity,goodsName:'fixture',reserved:true,reservedSeat:true,isInterlocking:false,preOpt:'private-token',kindOfGoods:'01007',ticketMaxCount:4},playSeq:{playSeq:'001'}};
   if(options.goods)Object.assign(initial.goods,options.goods);
@@ -29,11 +29,11 @@ function fixture(options={}){
     else if(url==='/onestop/api/seats/select')data={unselectableSeatInfoIds:[]};else throw Error('Unexpected request');
     const result=intercept?await intercept(call,data):data,status=options.httpStatus||200;return {ok:status<400,status,text:async()=>JSON.stringify(result)};
   }};
-  vm.createContext(sandbox);vm.runInContext('const readBookingContext='+readBookingContext.toString()+';const parseSeatLabels='+parseSeatLabels.toString()+';const planAdultPrices='+planAdultPrices.toString()+';globalThis.action='+httpBookingAction.toString()+';globalThis.navigate='+httpBookingNavigate.toString(),sandbox);
+  vm.createContext(sandbox);vm.runInContext('const readBookingContext='+readBookingContext.toString()+';const parseSeatLabels='+parseSeatLabels.toString()+';const planStandardPrices='+planStandardPrices.toString()+';globalThis.action='+httpBookingAction.toString()+';globalThis.navigate='+httpBookingNavigate.toString(),sandbox);
   const invoke=arg=>sandbox.action({runId:'fixture-run',...arg}),begin=arg=>invoke({action:'begin',expected:identity,seats,quantity:2,expiresAt:Date.now()+60000,...arg});
   return {sandbox,store,calls,routes,seats,records,invoke,begin,context:()=>JSON.parse(store.get('interpark/context')),setContext:c=>store.set('interpark/context',JSON.stringify(c)),reply:fn=>{intercept=fn;},navigate:()=>sandbox.navigate({runId:'fixture-run',expected:identity,expiresAt:Date.now()+5000}),async run(){let result=await begin();for(let i=0;i<30&&result.status==='pending'&&result.stage!=='ready';i++)result=await invoke({action:'step'});return result;}};
 }
-test('real HTTP coordinator selects two seats, validates adult quantities and stores native context without clicks',async()=>{
+test('real HTTP coordinator selects two seats, validates standard-price quantities and stores native context without clicks',async()=>{
   const f=fixture(),result=await f.run();assert.equal(result.stage,'ready');assert.equal(result.requestCount,7);assert.equal(f.calls.length,7);
   assert.equal(f.context().seats.length,2);assert.equal(f.context().prices[0].selectedSeatCount,2);assert.equal(result.validated,true);
   assert.ok(!JSON.stringify(result).includes('private-'));assert.ok(!JSON.stringify(result).includes('pgPrice'));
@@ -41,7 +41,7 @@ test('real HTTP coordinator selects two seats, validates adult quantities and st
   await f.navigate();assert.deepEqual(f.routes,['/payment']);await assert.rejects(f.navigate(),/NOT_CONFIRMED/);assert.equal(f.routes.length,1);
   await f.invoke({action:'step'});assert.equal(f.calls.length,7);
 });
-test('preorder routing matches the native ordinary adult-price flow',async()=>{const f=fixture({goods:{isPreOrder:true}});await f.run();await f.navigate();assert.deepEqual(f.routes,['/preorder']);});
+test('preorder routing matches the native standard-price flow',async()=>{const f=fixture({goods:{isPreOrder:true}});await f.run();await f.navigate();assert.deepEqual(f.routes,['/preorder']);});
 test('a known conflict releases only acknowledged holds before another candidate can run',async()=>{
   const f=fixture({reply:(call,data)=>call.body?.operationName==='PreselectSeat'&&call.body.variables.command.seatInfoId.endsWith(':1')?{errors:[{extensions:{backendErrorCode:'P41150'}}]}:data});
   const r=await f.run();assert.equal(r.status,'conflict');assert.equal(r.stage,'released');assert.equal(f.context().seats.length,0);
@@ -56,8 +56,8 @@ test('HTTP 200 with empty completion or false pricing validation is not success'
   for(const stage of ['confirm','validate']){const f=fixture({reply:(call,data)=>stage==='confirm'&&call.url==='/onestop/api/seats/select'?{}:stage==='validate'&&call.body?.operationName==='ValidatePricingSelection'?{data:{validatePricingSelection:false}}:data});const r=await f.run();assert.notEqual(r.stage,'ready');await assert.rejects(f.navigate());assert.equal(f.routes.length,0);}
 });
 test('seat metadata mismatch stops before hold requests',async()=>{const f=fixture();f.records[0].seatNo='999';const r=await f.run();assert.equal(r.code,'HTTP_METADATA_CHANGED');assert.equal(f.calls.length,1);});
-test('unsupported adult price and certification requirements stop before any hold',async()=>{
-  for(const p of [{priceGradeName:'청소년'},{isMembership:true},{randomCertifySeq:'123'},{discountSalesPrice:'9000'},{priceMaxCount:1}]){const f=fixture({price:p}),r=await f.run();assert.equal(r.status,'blocked');assert.equal(f.calls.length,2);assert.equal(f.context().seats,undefined);}
+test('conditional prices and insufficient quantities stop before any hold',async()=>{
+  for(const p of [{priceGradeName:'청소년'},{isMembership:true},{randomCertifySeq:'123'},{discountSalesPrice:'9000'},{priceMaxCount:1}]){const f=fixture({price:p}),r=await f.run();assert.equal(r.status,'blocked');assert.equal(r.code,'STANDARD_PRICE_UNAVAILABLE');assert.equal(f.calls.length,2);assert.equal(f.context().seats,undefined);assert.equal(r.priceAssessment.groups[0].selectedIndex,null);}
 });
 test('cancellation during an accepted hold prevents confirmation and persists the acknowledged seat',async()=>{
   const f=fixture();f.reply(async(call,data)=>{if(call.body?.operationName==='PreselectSeat')await f.invoke({action:'cancel'});return data;});const r=await f.run();assert.equal(r.code,'HTTP_CANCELLED');assert.equal(f.context().seats.length,1);assert.equal(f.calls.length,4);await assert.rejects(f.navigate());
@@ -70,7 +70,185 @@ test('session changes during a response prevent all later requests and context w
 });
 test('manual price edits after validation cannot be sent by navigation',async()=>{const f=fixture();await f.run();const c=f.context();c.prices[0].pgPrice.discountSalesPrice='1';f.setContext(c);await assert.rejects(f.navigate(),/CONTEXT_CHANGED/);assert.equal(f.routes.length,0);});
 test('existing CAPTCHA/dialog blocks all requests',async()=>{const f=fixture({blocked:true}),r=await f.run();assert.equal(r.code,'HTTP_PAGE_BLOCKED');assert.equal(f.calls.length,0);});
-test('ambiguous adult entries never select the first arbitrary price',()=>{assert.throws(()=>planAdultPrices([{seatGrade:'1',ticketMaxCount:4,priceList:[price,{...price,priceGrade:'B'}]}],[{seatGrade:'1'}]),/AMBIGUOUS/);});
+test('multiple ordinary prices preserve display order instead of sorting by price or adult wording',()=>{
+  const first={...price,salesPrice:'12000',discountSalesPrice:'12000'},second={...price,priceGrade:'B',priceGradeName:'예매가',discountName:'성인'};
+  const result=planStandardPrices([{seatGrade:'1',ticketMaxCount:4,priceList:[first,second]}],[{seatGrade:'1'}]);
+  assert.equal(result.prices[0].pgPrice.priceGrade,'A');assert.equal(result.assessment.groups[0].selectedIndex,0);
+  assert.deepEqual(result.assessment.groups[0].options.map(v=>v.eligible),[true,true]);
+});
+
+function pricePlan(rows,count=2,group={}){
+  return planStandardPrices({prices:[{seatGrade:'1',ticketMaxCount:4,priceList:rows,...group}]},Array.from({length:count},()=>({seatGrade:'1'})));
+}
+function unavailablePrice(rows,count=2,group={}){
+  let failure;try{pricePlan(rows,count,group);}catch(error){failure=error;}
+  assert.equal(failure?.message,'STANDARD_PRICE_UNAVAILABLE');
+  assert.equal(failure.priceAssessment.groups[0].selectedIndex,null);
+  return failure.priceAssessment.groups[0];
+}
+
+test('ordinary prices need no adult token or special PG display badge',()=>{
+  for(const [name,discount,pgCode] of [['입장권','','PG001'],['정상가','','PG003'],['예매가','일반','PG005'],['예매가','성인','PG007'],['POSTSEASON TICKET','','PG999']]){
+    const result=pricePlan([{...price,priceGradeName:name,discountName:discount,pgCode}]);
+    assert.equal(result.prices[0].selectedSeatCount,2);assert.equal(result.prices[0].pgPrice.priceGradeName,name);
+    assert.equal(result.assessment.groups[0].options[0].eligible,true);
+  }
+});
+
+test('conditional price rows are skipped individually and all later options are assessed',()=>{
+  const rows=[
+    {...price,priceGrade:'MEMBER',isMembership:true},
+    {...price,priceGrade:'CERTIFY',randomCertifySeq:'private-certification'},
+    {...price,priceGrade:'CARD',cardKind:'private-card-condition'},
+    {...price,priceGrade:'COUPON',issueCode:'private-coupon-condition'},
+    {...price,priceGrade:'SETTLE',kindOfSettle:'special'},
+    {...price,priceGrade:'DISCOUNT',discountSalesPrice:'9000'},
+    {...price,priceGrade:'FULL',priceMaxCount:1},
+    {...price,priceGrade:'NORMAL'},
+    {...price,priceGrade:'LATER',salesPrice:'5000',discountSalesPrice:'5000'}
+  ];
+  const result=pricePlan(rows),group=result.assessment.groups[0];
+  assert.equal(result.prices[0].pgPrice.priceGrade,'NORMAL');assert.equal(group.selectedIndex,7);
+  assert.deepEqual(group.options.map(v=>v.index),[0,1,2,3,4,5,6,7,8]);
+  assert.deepEqual(group.options.map(v=>v.eligible),[false,false,false,false,false,false,false,true,true]);
+  assert.ok(group.options.slice(0,7).every(v=>v.reasons.length>0));
+  assert.deepEqual(group.options[7].reasons,[]);assert.ok(!JSON.stringify(group).includes('private-'));
+});
+
+test('qualification labels are not silently chosen as ordinary prices even without a discount flag',()=>{
+  for(const label of ['장애인','휠체어 동반인','국가유공자','보훈 대상','재관람','청소년','어린이','학생','경로','군인','회원 전용','초대권','초청권','증정권','교환권','문화누리','카드 할인','쿠폰 적용']){
+    const group=unavailablePrice([{...price,priceGradeName:label}]);
+    assert.equal(group.options[0].eligible,false,label);assert.ok(group.options[0].reasons.includes(/카드|쿠폰/.test(label)?'PRICE_DISCOUNT_UNSUPPORTED':'PRICE_REQUIRES_QUALIFICATION'),label);
+  }
+  const result=pricePlan([{...price,priceGradeName:'장애인 할인'},{...price,priceGrade:'NORMAL',priceGradeName:'입장권'}]);
+  assert.equal(result.assessment.groups[0].selectedIndex,1);
+});
+
+test('native false flags remain ordinary while truthy or unknown flags are excluded',()=>{
+  const keys=['isMembership','isHPointCertify','isRandomCertifyOnce','dblDiscountOrNot'];
+  for(const value of [undefined,null,false,0,'']){
+    const row={...price};for(const key of keys)row[key]=value;
+    assert.equal(pricePlan([row]).prices.length,1,JSON.stringify(value));
+  }
+  for(const key of keys)for(const value of [true,1,'0','N','n','false','FALSE','1','Y','true','unknown',{},[]]){
+    assert.ok(unavailablePrice([{...price,[key]:value}]).options[0].reasons.includes('PRICE_REQUIRES_CERTIFICATION'),key+':'+JSON.stringify(value));
+  }
+});
+
+test('invitation or benefit entries cannot displace a later ordinary ticket even at full or zero price',()=>{
+  for(const name of ['초대권','초청권','증정권','교환권','문화누리'])for(const amount of [0,10000]){
+    const result=pricePlan([{...price,priceGrade:'SPECIAL',priceGradeName:name,salesPrice:amount,discountSalesPrice:amount},{...price,priceGrade:'NORMAL',priceGradeName:'입장권'}]);
+    assert.equal(result.assessment.groups[0].selectedIndex,1);assert.equal(result.prices[0].pgPrice.priceGrade,'NORMAL');
+  }
+});
+
+test('blank, nonnumeric, negative and coercible non-number amounts cannot become a free ordinary price',()=>{
+  for(const value of [undefined,null,'','  ',false,true,[],{},'0x20','1,000','NaN','Infinity',-1,Infinity,NaN]){
+    const group=unavailablePrice([{...price,salesPrice:value,discountSalesPrice:value}]);
+    assert.ok(group.options[0].reasons.includes('PRICE_AMOUNT_INVALID'),String(value));
+  }
+  const zero=pricePlan([{...price,salesPrice:'0',discountSalesPrice:0}]);assert.equal(zero.assessment.groups[0].options[0].amount,0);
+});
+
+test('nonzero discounts and invalid discount values are excluded even at the same displayed amount',()=>{
+  for(const change of [{discountValue:1},{discountValue:'5'},{discountValue:'abc'},{discountSalesPrice:'9999'},{salesPrice:'9999'}]){
+    const group=unavailablePrice([{...price,...change}]);assert.equal(group.options[0].eligible,false);
+  }
+  assert.equal(pricePlan([{...price,discountValue:'0'}]).prices.length,1);
+});
+
+test('empty optional discount metadata remains unset without relaxing required amounts or caps',()=>{
+  const blankOptional={...price,discountSeq:'',discountValue:'',discountRate:''};
+  assert.equal(pricePlan([blankOptional]).prices.length,1);
+  for(const field of ['salesPrice','discountSalesPrice','priceMaxCount','remainCount'])assert.equal(unavailablePrice([{...blankOptional,[field]:''}]).options[0].eligible,false,field);
+});
+
+test('per-price, grade and remaining caps require sufficient integer quantities',()=>{
+  for(const key of ['priceMaxCount','remainCount'])for(const value of ['',false,true,[],{},'0x10','1.5',-1,0,1,Number.MAX_SAFE_INTEGER+1,Infinity,'NaN']){
+    const group=unavailablePrice([{...price,[key]:value}]);assert.ok(group.options[0].reasons.includes('PRICE_QUANTITY_LIMIT'),key+':'+String(value));
+  }
+  for(const value of [undefined,null,'',false,[],1.5,1,Infinity]){
+    const group=unavailablePrice([price],2,{ticketMaxCount:value});assert.ok(group.options[0].reasons.includes('PRICE_QUANTITY_LIMIT'),String(value));
+  }
+  for(const remainCount of [undefined,null,2,'2'])assert.equal(pricePlan([{...price,remainCount}]).prices.length,1);
+  const capped=pricePlan([{...price,priceMaxCount:'5',remainCount:'3'}],2,{ticketMaxCount:'3'});assert.equal(capped.prices[0].pgPrice.priceMaxCount,3);
+});
+
+test('quantity rules skip an incompatible first row while preserving later eligibility',()=>{
+  const rows=[{...price,priceGrade:'THREE',priceSettingType:'L8006',priceSettingCount:3},{...price,priceGrade:'TWO',priceSettingType:'L8003',priceSettingCount:2}];
+  const result=pricePlan(rows);assert.equal(result.prices[0].pgPrice.priceGrade,'TWO');assert.equal(result.assessment.groups[0].selectedIndex,1);
+  assert.ok(result.assessment.groups[0].options[0].reasons.includes('PRICE_QUANTITY_LIMIT'));
+  for(const count of ['',null,false,0,-1,1.5,'2x'])assert.ok(unavailablePrice([{...price,priceSettingType:'L8003',priceSettingCount:count}]).options[0].reasons.includes('PRICE_RULE_UNSUPPORTED'));
+});
+
+test('multiple grades aggregate seat counts independently in first-seat order',()=>{
+  const groups=[
+    {seatGrade:'2',ticketMaxCount:4,priceList:[{...price,seatGrade:'2',priceGrade:'TWO',salesPrice:'20000',discountSalesPrice:'20000'}]},
+    {seatGrade:'1',ticketMaxCount:3,priceList:[{...price,priceGrade:'ONE'}]}
+  ];
+  const result=planStandardPrices({prices:groups},[{seatGrade:'1'},{seatGrade:'2'},{seatGrade:'1'}]);
+  assert.deepEqual(result.prices.map(v=>[v.pgPrice.seatGrade,v.selectedSeatCount]),[['1',2],['2',1]]);
+  assert.deepEqual(result.assessment.groups.map(v=>[v.seatGrade,v.seatCount]),[['1',2],['2',1]]);
+});
+
+test('malformed envelopes and missing or duplicate grade groups are distinct from ordinary unavailability',()=>{
+  for(const payload of [undefined,null,{},[],{prices:{}},{prices:[]},{prices:Array(501).fill({})},{prices:[{seatGrade:'1',priceList:[price]}],toping:{code:'private-code'}}]){
+    assert.throws(()=>planStandardPrices(payload,[{seatGrade:'1'}]),/PRICE_RESPONSE_UNSUPPORTED/);
+  }
+  const group={seatGrade:'1',ticketMaxCount:4,priceList:[price]};
+  for(const groups of [[{...group,seatGrade:'2'}],[group,group]])assert.throws(()=>planStandardPrices(groups,[{seatGrade:'1'}]),/PRICE_GRADE_AMBIGUOUS/);
+  for(const groups of [[{...group,priceList:{}}],[null],[{...group,seatGrade:[]}],[{...group,priceList:Array(501).fill(price)}]])assert.throws(()=>planStandardPrices(groups,[{seatGrade:'1'}]),/PRICE_RESPONSE_UNSUPPORTED/);
+});
+
+test('malformed price rows and grade mismatches cannot be selected through coercion',()=>{
+  for(const row of [null,[],{...price,seatGrade:'2'},{...price,seatGrade:undefined},{...price,priceGrade:''},{...price,priceGrade:[]},{...price,pgCode:'PG002x'}]){
+    const result=pricePlan([row,{...price,priceGrade:'NORMAL'}]);assert.equal(result.assessment.groups[0].selectedIndex,1);assert.equal(result.assessment.groups[0].options[0].eligible,false);
+  }
+});
+
+test('an empty applicable price list produces a useful unavailable assessment',()=>{
+  const group=unavailablePrice([]);assert.equal(group.seatGrade,'1');assert.equal(group.seatCount,2);assert.deepEqual(group.options,[]);
+});
+
+test('missing or malformed seat grades cannot form a price plan',()=>{
+  for(const seats of [undefined,null,[],{},[{seatGrade:undefined}],[{seatGrade:''}],[{seatGrade:[]}],[{seatGrade:'1x'}],Array(5).fill({seatGrade:'1'})]){
+    assert.throws(()=>planStandardPrices([{seatGrade:'1',ticketMaxCount:4,priceList:[price]}],seats),error=>{
+      assert.equal(error.message,'PRICE_RESPONSE_UNSUPPORTED');assert.ok(Array.isArray(error.priceAssessment.groups));return true;
+    });
+  }
+});
+
+test('sparse grade and seat arrays produce explicit structural errors with diagnostics',()=>{
+  const group={seatGrade:'1',ticketMaxCount:4,priceList:[price]},sparseGroups=[group],sparseSeats=[{seatGrade:'1'}];
+  sparseGroups.length=2;sparseSeats.length=2;
+  for(const [groups,seats] of [[sparseGroups,[{seatGrade:'1'}]],[[group],sparseSeats]]){
+    assert.throws(()=>planStandardPrices(groups,seats),error=>{assert.equal(error.message,'PRICE_RESPONSE_UNSUPPORTED');assert.deepEqual(error.priceAssessment,{groups:[]});return true;});
+  }
+});
+
+test('native price data is preserved locally while diagnostics expose only approved fields',()=>{
+  const row={...price,priceGrade:'NORMAL',serverMarker:'native-field',sessionId:'private-session',memberId:'private-member',cardToken:'private-card',nested:{token:'private-token'}};
+  const before=JSON.stringify(row),result=pricePlan([row],2,{ticketMaxCount:3});
+  assert.equal(JSON.stringify(row),before);assert.equal(result.prices[0].pgPrice.serverMarker,'native-field');assert.equal(result.prices[0].pgPrice.priceMaxCount,3);
+  assert.ok(!JSON.stringify(result.assessment).includes('private-'));assert.ok(!JSON.stringify(result.assessment).includes('native-field'));
+  const keys=Object.keys(result.assessment.groups[0].options[0]).sort();
+  assert.deepEqual(keys,['amount','discountName','eligible','index','pgCode','priceGrade','priceGradeName','reasons'].sort());
+});
+
+test('successful HTTP summaries preserve price reasons without exposing server credentials or records',async()=>{
+  const f=fixture({reply:(call,data)=>call.url.startsWith('/onestop/api/prices/')?{prices:[{seatGrade:'1',ticketMaxCount:4,priceList:[{...price,isMembership:true,randomCertifySeq:'private-proof'},{...price,priceGrade:'B',sessionId:'private-price-session',token:'private-price-token'}]}]}:data});
+  const result=await f.run();assert.equal(result.stage,'ready');assert.equal(result.priceAssessment.groups[0].selectedIndex,1);
+  assert.equal(result.priceAssessment.groups[0].options.length,2);assert.ok(!JSON.stringify(result).includes('private-'));assert.ok(!JSON.stringify(result).includes('pgPrice'));
+  assert.equal(f.context().prices[0].pgPrice.priceGrade,'B');assert.equal(f.context().prices[0].pgPrice.token,'private-price-token');
+  const status=await f.invoke({action:'status'});assert.equal(status.priceAssessment.groups[0].selectedIndex,1);
+});
+
+test('failed HTTP summaries retain every tested option and stop before status reads or seat mutations',async()=>{
+  const f=fixture({reply:(call,data)=>call.url.startsWith('/onestop/api/prices/')?{prices:[{seatGrade:'1',ticketMaxCount:4,priceList:[{...price,isMembership:true,randomCertifySeq:'private-proof'},{...price,priceGrade:'B',discountSalesPrice:'9000'},{...price,priceGrade:'C',priceMaxCount:1}]}]}:data});
+  const result=await f.run();assert.equal(result.code,'STANDARD_PRICE_UNAVAILABLE');assert.equal(result.status,'blocked');assert.equal(result.requestCount,2);assert.equal(result.heldCount,0);
+  assert.equal(result.priceAssessment.groups[0].options.length,3);assert.equal(result.priceAssessment.groups[0].selectedIndex,null);assert.ok(!JSON.stringify(result).includes('private-'));
+  assert.ok(f.calls.every(v=>!v.body));assert.ok(!f.calls.some(v=>v.url.includes('/seatStatus')));assert.equal(f.context().seats,undefined);
+});
 module.exports={fixture};
 
 test('seat-only mode stops after acknowledged holds and synchronizes without confirming or pricing',async()=>{
@@ -106,10 +284,10 @@ test('expired session and changed session during final navigation cannot dispatc
 });
 
 test('price units, minimums and caps follow the inspected price component rules',()=>{
-  const plan=(type,n,count)=>planAdultPrices([{seatGrade:'1',ticketMaxCount:4,priceList:[{...price,priceSettingType:type,priceSettingCount:n}]}],Array.from({length:count},()=>({seatGrade:'1'})));
-  for(const [type,n,count] of [['L8003',2,2],['L8004',2,3],['L8005',2,2],['L8006',2,2]])assert.equal(plan(type,n,count)[0].selectedSeatCount,count);
-  for(const [type,n,count] of [['L8003',2,3],['L8004',2,1],['L8005',2,3],['L8006',2,1]])assert.throws(()=>plan(type,n,count),/QUANTITY_LIMIT/);
-  assert.throws(()=>plan('unknown',1,1),/RULE_UNSUPPORTED/);
+  const plan=(type,n,count)=>planStandardPrices([{seatGrade:'1',ticketMaxCount:4,priceList:[{...price,priceSettingType:type,priceSettingCount:n}]}],Array.from({length:count},()=>({seatGrade:'1'})));
+  for(const [type,n,count] of [['L8003',2,2],['L8004',2,3],['L8005',2,2],['L8006',2,2]])assert.equal(plan(type,n,count).prices[0].selectedSeatCount,count);
+  for(const [type,n,count] of [['L8003',2,3],['L8004',2,1],['L8005',2,3],['L8006',2,1]])assert.throws(()=>plan(type,n,count),/STANDARD_PRICE_UNAVAILABLE/);
+  assert.throws(()=>plan('unknown',1,1),/STANDARD_PRICE_UNAVAILABLE/);
 });
 
 test('HTTP 500 never counts as a recoverable conflict even with a familiar backend code',async()=>{
@@ -220,7 +398,7 @@ test('unknown bulk outcomes preserve the receipt and cannot be replayed or route
 
 test('wheelchair inclusion does not bypass certified pricing requirements',async()=>{
   const f=wheelchairFixture({price:{isMembership:true}}),r=await f.runSingleton(false);
-  assert.equal(r.status,'blocked');assert.equal(r.code,'PRICE_REQUIRES_CERTIFICATION');assert.equal(f.calls.length,2);assert.equal(f.context().seats,undefined);
+  assert.equal(r.status,'blocked');assert.equal(r.code,'STANDARD_PRICE_UNAVAILABLE');assert.equal(f.calls.length,2);assert.equal(f.context().seats,undefined);
 });
 
 test('cancelling before any mutation permits restart after zero, metadata, price or status reads',async()=>{
@@ -287,7 +465,7 @@ test('equivalent grade spelling and the documented missing-name fallback remain 
 test('one unsupported price in a multi-grade combination stops before any seat mutation',async()=>{
   const f=fixture();Object.assign(f.seats[1],{gradeCode:'2',grade:'다음석'});Object.assign(f.records[1],{seatGrade:'2',seatGradeName:'다음석'});
   f.reply((call,data)=>call.url.startsWith('/onestop/api/prices/')?{prices:[...data.prices,{seatGrade:'2',ticketMaxCount:4,priceList:[{...price,seatGrade:'2',isMembership:true}]}]}:data);
-  const r=await f.run();assert.equal(r.code,'PRICE_REQUIRES_CERTIFICATION');assert.equal(r.heldCount,0);assert.equal(f.calls.length,2);
+  const r=await f.run();assert.equal(r.code,'STANDARD_PRICE_UNAVAILABLE');assert.equal(r.heldCount,0);assert.equal(f.calls.length,2);
   assert.ok(!f.calls.some(call=>call.body?.operationName==='PreselectSeat'));assert.equal(f.context().seats,undefined);
 });
 

@@ -17,7 +17,7 @@ const observation=require('../src/booking-observation');
 const {pageActions}=require('../src/chrome-target');
 const {ACTIONS}=require('../src/browser-bridge');
 const metadata=require('../src/metadata'),seatNetwork=require('../src/seat-network'),entryNetwork=require('../src/entry-network');
-const lines=["'use strict';",'globalThis.BaseballActions=(()=>{',`const siteInvoke=${invokeSiteFunction.toString()};`,`const readBookingContext=${readBookingContext.toString()};`,`const resolveGradeNames=${resolveGradeNames.toString()};`,`const parseSeatLabels=${metadata.parseSeatLabels.toString()};`,`const planAdultPrices=${httpBooking.planAdultPrices.toString()};`,`const priceState=${pricePage.priceState.toString()};`,'return Object.freeze({'];
+const lines=["'use strict';",'globalThis.BaseballActions=(()=>{',`const siteInvoke=${invokeSiteFunction.toString()};`,`const readBookingContext=${readBookingContext.toString()};`,`const resolveGradeNames=${resolveGradeNames.toString()};`,`const parseSeatLabels=${metadata.parseSeatLabels.toString()};`,`const planStandardPrices=${httpBooking.planStandardPrices.toString()};`,`const priceState=${pricePage.priceState.toString()};`,'return Object.freeze({'];
 for(const [group,functions] of Object.entries({entry,live,flow,captcha,manualCaptcha,observation,directApi,publicGame,seatDetails,pricePage,httpBooking:{httpBookingAction:httpBooking.httpBookingAction},page:pageActions}))for(const [name,fn] of Object.entries(functions))if(ACTIONS.has(`${group}.${name}`))lines.push(`${JSON.stringify(`${group}.${name}`)}:${fn.toString()},`);
 lines.push('});})();');
 fs.writeFileSync(path.join(__dirname,'actions.js'),lines.join('\n')+'\n');

@@ -24,7 +24,7 @@ app.whenReady().then(async()=>{
       for(const [key,value] of Object.entries(identity))assert.equal(url.searchParams.get(key),value);
       data={data:['c']};
     }
-    else if(url.pathname==='/onestop/api/prices/'+identity.goodsCode)data={prices:[{seatGrade:'1',ticketMaxCount:4,priceList:[{seatGrade:'1',pgCode:'PG002',priceGrade:'A',priceGradeName:'예매가',discountName:'성인',salesPrice:10000,discountSalesPrice:10000,priceMaxCount:4}]}]};
+    else if(url.pathname==='/onestop/api/prices/'+identity.goodsCode)data={prices:[{seatGrade:'1',ticketMaxCount:4,priceList:[{seatGrade:'1',pgCode:'PG002',priceGrade:'A',priceGradeName:'일반가',discountName:'',salesPrice:10000,discountSalesPrice:10000,priceMaxCount:4}]}]};
     else if(url.pathname==='/onestop/api/seats/select')data={unselectableSeatInfoIds:[]};
     else if(url.pathname==='/onestop/gql'&&body.operationName==='PreselectSeat')data={data:{preselectSeat:true}};
     else if(url.pathname==='/onestop/gql'&&body.operationName==='ValidatePricingSelection')data={data:{validatePricingSelection:true}};
@@ -48,7 +48,8 @@ app.whenReady().then(async()=>{
   await wc.executeJavaScript(`BaseballHttpNavigate(${JSON.stringify({runId:'smoke',expected:identity,expiresAt:Date.now()+10000})})`);
   const result=await wc.executeJavaScript('({clicks:fixture.clicks,routes:fixture.routes,hidden:document.hidden,context:JSON.parse(sessionStorage.getItem("interpark/context"))})');
   assert.equal(result.clicks,0);assert.deepEqual(result.routes,['/payment']);assert.equal(win.isVisible(),false);assert.equal(result.context.prices[0].selectedSeatCount,2);
-  const report={passed:true,version:require('../package.json').version,windowHidden:true,pageHidden:result.hidden,httpRequests:calls.length,seatStatusRequests:1,clicks:0,selectedSeats:2,adultQuantity:2,destination:'/payment',liveSite:false};
+  assert.equal(result.context.prices[0].pgPrice.priceGradeName,'일반가');assert.equal(status.priceAssessment.groups[0].selectedIndex,0);
+  const report={passed:true,version:require('../package.json').version,windowHidden:true,pageHidden:result.hidden,httpRequests:calls.length,seatStatusRequests:1,clicks:0,selectedSeats:2,standardQuantity:2,destination:'/payment',liveSite:false};
   fs.writeFileSync(path.join(root,'work/http-booking-smoke.json'),JSON.stringify(report,null,2));console.log(JSON.stringify(report));
   win.destroy();clearTimeout(watchdog);app.exit(0);
 }).catch(error=>{console.error(error);app.exit(1);});

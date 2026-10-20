@@ -247,10 +247,13 @@ scenario('a seat conflict releases the acknowledged hold before the main loop tr
   }finally{await f.close();}
 });
 
-scenario('an unsupported adult price stops the real flow before a hold or navigation',async engine=>{
+scenario('a price list containing only membership pricing stops the real flow before a hold or navigation',async engine=>{
   const f=await bookingFixture({...engine,price:{isMembership:true}});try{
-    const {task}=await f.start();await assert.rejects(task,/PRICE_REQUIRES_CERTIFICATION/);
+    const {task}=await f.start();await assert.rejects(task,/STANDARD_PRICE_UNAVAILABLE/);
     assert.equal(f.mutations().length,0);assert.deepEqual(await f.destination(),[]);assert.equal((await f.pageContext()).seats,undefined);
+    const evidence=f.logs.filter(event=>event.event==='price-selection');assert.equal(evidence.length,1);
+    const group=evidence[0].priceAssessment.groups[0];assert.equal(group.selectedIndex,null);assert.equal(group.seatCount,2);
+    assert.equal(group.options[0].eligible,false);assert.ok(group.options[0].reasons.includes('PRICE_REQUIRES_CERTIFICATION'));
   }finally{await f.close();}
 });
 
@@ -352,6 +355,10 @@ scenario('membership, discount, insufficient quantity and age-qualified rows are
   ]});try{
     const {task}=await f.start();assert.equal((await task).completed,true);
     assert.equal((await f.pageContext()).prices[0].pgPrice.priceGrade,'GENERAL');assert.equal(f.mutations().length,2);
+    const evidence=f.logs.filter(event=>event.event==='price-selection');assert.equal(evidence.length,1);
+    const group=evidence[0].priceAssessment.groups[0];assert.equal(group.selectedIndex,4);assert.equal(group.options[4].priceGrade,'GENERAL');
+    assert.equal(group.options[4].eligible,true);assert.deepEqual(group.options[4].reasons,[]);
+    for(const [index,reason] of ['PRICE_REQUIRES_CERTIFICATION','PRICE_DISCOUNT_UNSUPPORTED','PRICE_QUANTITY_LIMIT','PRICE_REQUIRES_QUALIFICATION'].entries())assert.ok(group.options[index].reasons.includes(reason));
     assert.deepEqual(await f.destination(),['/payment']);
   }finally{await f.close();}
 });
@@ -385,7 +392,7 @@ scenario('one selected grade without an eligible ordinary price blocks the whole
     {name:'A석',code:'1',block:'101',count:1,priceList:[{priceGradeName:'일반',discountName:''}]},
     {name:'B석',code:'2',block:'102',count:1,priceList:[{priceGradeName:'청소년',discountName:''}]},
   ],preferences:{quantity:2,areas:[],blocks:[],tiers:[{areas:['A석']},{areas:['B석']}],fallbackAnywhere:false,requireTogether:false}});try{
-    const {task}=await f.start();await assert.rejects(task,/PRICE|가격/);
+    const {task}=await f.start();await assert.rejects(task,/STANDARD_PRICE_UNAVAILABLE/);
     assert.equal(f.mutations().length,0);assert.equal(f.calls.filter(c=>c.path==='/onestop/api/seats/select').length,0);
     assert.equal((await f.pageContext()).seats,undefined);assert.deepEqual(await f.destination(),[]);
   }finally{await f.close();}

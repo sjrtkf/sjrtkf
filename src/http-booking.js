@@ -2,32 +2,66 @@
 const {readBookingContext}=require('./booking-context');
 const {parseSeatLabels}=require('./metadata');
 
-// Mirrors the normal price-page data contract, not a DOM quantity control.
-// Ordinary adult prices only; membership, voucher and certified discounts stop.
-function planAdultPrices(payload,seats){
+// The native price page preserves priceList order. Match each selected grade,
+// then choose its first full-price entry without a separate eligibility step.
+// Keep this function self-contained: the extension embeds its static source.
+function planStandardPrices(payload,seats){
+  const assessment={groups:[]},fail=code=>{const error=Error(code);error.priceAssessment=assessment;throw error;};
+  const record=v=>v!==null&&typeof v==='object'&&!Array.isArray(v);
+  const gradeOf=v=>typeof v==='string'&&/^\d{1,30}$/.test(v)?v:typeof v==='number'&&Number.isSafeInteger(v)&&v>=0?String(v):null;
+  const numberOf=v=>typeof v==='number'&&Number.isFinite(v)?v:typeof v==='string'&&/^\d+(?:\.\d+)?$/.test(v.trim())?Number(v):NaN;
+  const integerOf=v=>{const n=numberOf(v);return Number.isSafeInteger(n)&&n>=0?n:NaN;};
+  const textOf=v=>typeof v==='string'?v.slice(0,200):'';
   const groups=Array.isArray(payload)?payload:payload?.prices;
-  if(!Array.isArray(groups)||!groups.length||groups.length>500||payload?.toping?.code)throw Error('PRICE_RESPONSE_UNSUPPORTED');
-  const counts=new Map();for(const seat of seats)counts.set(String(seat.seatGrade),(counts.get(String(seat.seatGrade))||0)+1);
-  const plan=[];
+  if(!Array.isArray(groups)||!groups.length||groups.length>500||payload?.toping?.code
+    ||Array.from(groups).some(g=>!record(g)||gradeOf(g.seatGrade)===null||!Array.isArray(g.priceList)||g.priceList.length>500)
+    ||!Array.isArray(seats)||!seats.length||seats.length>4||Array.from(seats).some(s=>!record(s)||gradeOf(s.seatGrade)===null))fail('PRICE_RESPONSE_UNSUPPORTED');
+  const counts=new Map();
+  for(const seat of seats){const grade=gradeOf(seat.seatGrade);counts.set(grade,(counts.get(grade)||0)+1);}
+  const prices=[];
   for(const [grade,count] of counts){
-    const matches=groups.filter(g=>String(g?.seatGrade)===grade);
-    if(matches.length!==1||!Array.isArray(matches[0].priceList))throw Error('PRICE_GRADE_AMBIGUOUS');
-    const group=matches[0],clean=v=>String(v??'').normalize('NFKC').replace(/[\s/·\[\]]/g,'');
-    const adult=group.priceList.filter(p=>p&&String(p.seatGrade)===grade&&['PG002','PG004','PG007'].includes(p.pgCode)&&clean(String(p.priceGradeName||'')+String(p.discountName||''))==='예매가성인');
-    if(adult.length!==1)throw Error('ADULT_PRICE_AMBIGUOUS');
-    const p=adult[0];
-    if(typeof p.priceGrade!=='string'||!p.priceGrade||p.isMembership||p.isHPointCertify||p.isRandomCertifyOnce||p.randomCertifySeq&&String(p.randomCertifySeq)!=='0'||p.kindOfDiscount&&String(p.kindOfDiscount)!=='0'||p.dblDiscountOrNot||p.kindOfSettle||p.issueCode||p.cardKind)throw Error('PRICE_REQUIRES_CERTIFICATION');
-    if(p.priceSettingType){
-      const type=p.priceSettingType,n=Number(p.priceSettingCount);
-      if(!['L8003','L8004','L8005','L8006'].includes(type)||!Number.isInteger(n)||n<1)throw Error('PRICE_RULE_UNSUPPORTED');
-      if(type==='L8003'&&count%n||type==='L8004'&&count<n||type==='L8005'&&count>n||type==='L8006'&&count!==n)throw Error('PRICE_QUANTITY_LIMIT');
+    const result={seatGrade:grade,seatCount:count,options:[],selectedIndex:null};assessment.groups.push(result);
+    const matches=groups.filter(g=>gradeOf(g.seatGrade)===grade);
+    if(matches.length!==1)fail('PRICE_GRADE_AMBIGUOUS');
+    const group=matches[0],ticketMax=integerOf(group.ticketMaxCount);
+    for(let index=0;index<group.priceList.length;index++){
+      const p=group.priceList[index],reasons=[],add=reason=>{if(!reasons.includes(reason))reasons.push(reason);};
+      const amount=record(p)?numberOf(p.discountSalesPrice):NaN;
+      const option={index,priceGrade:textOf(p?.priceGrade),pgCode:textOf(p?.pgCode),priceGradeName:textOf(p?.priceGradeName),discountName:textOf(p?.discountName),amount:Number.isFinite(amount)&&amount>=0?amount:null,eligible:false,reasons};
+      result.options.push(option);
+      if(!record(p)){add('PRICE_RECORD_INVALID');continue;}
+      if(gradeOf(p.seatGrade)!==grade||typeof p.priceGrade!=='string'||!p.priceGrade.trim()||p.priceGrade.length>100
+        ||typeof p.pgCode!=='string'||!/^PG\d{3}$/.test(p.pgCode)
+        ||p.priceGradeName!=null&&typeof p.priceGradeName!=='string'||p.discountName!=null&&typeof p.discountName!=='string'
+        ||!((p.priceGradeName||'')+' '+(p.discountName||'')).trim())add('PRICE_RECORD_INVALID');
+      // These fields are tested for truthiness by the native page. In
+      // particular, strings such as "N" are not equivalent to false there.
+      if(['isMembership','isHPointCertify','isRandomCertifyOnce','dblDiscountOrNot','kindOfSettle','issueCode','cardKind','isCoupon','couponCode','couponSeq','cardCode','isCard','isCertification','certificationCode'].some(k=>p[k])
+        ||p.randomCertifySeq&&String(p.randomCertifySeq)!=='0')add('PRICE_REQUIRES_CERTIFICATION');
+      const label=((typeof p.priceGradeName==='string'?p.priceGradeName:'')+' '+(typeof p.discountName==='string'?p.discountName:'')).normalize('NFKC');
+      if(/장애|휠체어|유공|보훈|재관람|청소년|어린이|아동|유아|영유아|미취학|학생|초등|중등|고등|군인|군경|장병|경로|고령|노인|시니어|임산부|다자녀|복지|수급|차상위|지역주민|동반자|동반인|보호자|사원|직원|교직원|회원|멤버십|멤버쉽|시즌권|수험생|단체|초대|초청|증정|교환권|문화누리|\b(?:child(?:ren)?|youth|student|senior|disabled|wheelchair|veteran|military|member(?:ship)?)\b/i.test(label)
+        ||!/(?:성인|\badult\b)/i.test(label)&&/(?:만\s*\d+\s*세|\d+\s*세\s*(?:이상|이하|미만))/.test(label))add('PRICE_REQUIRES_QUALIFICATION');
+      if(/할인|쿠폰|포인트|마일리지|제휴|카드|프로모션|특가|우대|얼리버드|\b(?:discount|coupon|voucher|promotion|loyalty|card|visa|mastercard|amex|points)\b/i.test(label)
+        ||p.kindOfDiscount&&String(p.kindOfDiscount)!=='0'||p.isDiscount
+        ||p.discountSeq!=null&&p.discountSeq!==''&&numberOf(p.discountSeq)!==0
+        ||p.discountValue!=null&&p.discountValue!==''&&numberOf(p.discountValue)!==0
+        ||p.discountRate!=null&&p.discountRate!==''&&numberOf(p.discountRate)!==0)add('PRICE_DISCOUNT_UNSUPPORTED');
+      const original=numberOf(p.salesPrice);
+      if(!Number.isFinite(amount)||!Number.isFinite(original)||amount<0||original<0||amount>Number.MAX_SAFE_INTEGER||original>Number.MAX_SAFE_INTEGER)add('PRICE_AMOUNT_INVALID');
+      else if(amount!==original)add('PRICE_DISCOUNT_UNSUPPORTED');
+      const max=integerOf(p.priceMaxCount),remaining=p.remainCount==null?Infinity:integerOf(p.remainCount);
+      if(!Number.isSafeInteger(max)||max<count||!Number.isSafeInteger(ticketMax)||ticketMax<count||Number.isNaN(remaining)||remaining<count)add('PRICE_QUANTITY_LIMIT');
+      if(p.priceSettingType!=null&&p.priceSettingType!==''){
+        const type=p.priceSettingType,n=integerOf(p.priceSettingCount);
+        if(!['L8003','L8004','L8005','L8006'].includes(type)||!Number.isSafeInteger(n)||n<1)add('PRICE_RULE_UNSUPPORTED');
+        else if(type==='L8003'&&count%n||type==='L8004'&&count<n||type==='L8005'&&count>n||type==='L8006'&&count!==n)add('PRICE_QUANTITY_LIMIT');
+      }
+      option.eligible=reasons.length===0;
+      if(option.eligible&&result.selectedIndex===null){result.selectedIndex=index;prices.push({selectedSeatCount:count,pgPrice:{...p,priceMaxCount:Math.min(max,ticketMax,remaining)}});}
     }
-    const amount=Number(p.discountSalesPrice),original=Number(p.salesPrice);
-    if(p.discountSalesPrice==null||p.salesPrice==null||!Number.isFinite(amount)||amount<0||amount!==original||Number(p.discountValue||0)!==0)throw Error('ADULT_PRICE_UNSUPPORTED');
-    if(!Number.isInteger(Number(p.priceMaxCount))||Number(p.priceMaxCount)<count||!Number.isInteger(Number(group.ticketMaxCount))||Number(group.ticketMaxCount)<count||p.remainCount!=null&&Number(p.remainCount)<count)throw Error('PRICE_QUANTITY_LIMIT');
-    plan.push({selectedSeatCount:count,pgPrice:{...p,priceMaxCount:Math.min(Number(p.priceMaxCount),Number(group.ticketMaxCount))}});
   }
-  return plan;
+  if(assessment.groups.some(g=>g.selectedIndex===null))fail('STANDARD_PRICE_UNAVAILABLE');
+  return {prices,assessment};
 }
 
 // One HTTP request per step keeps the extension's command timeout bounded.
@@ -39,7 +73,7 @@ async function httpBookingAction(arg={}){
   const identity=c=>['goodsCode','placeCode'].map(k=>c.goods?.[k]).concat(c.playSeq?.playSeq).join(':');
   const fingerprint=c=>JSON.stringify([c.goods,c.playSeq,c.sessionId,c.channelType,c.bizCode,c.seats||[],c.prices||[]]);
   const receipt=s=>sessionStorage.setItem(KEY,JSON.stringify({runId:s.runId,identity:s.identity,sessionId:s.context.sessionId,contextSignature:s.expected,stage:s.stage,held:s.held.map(v=>v.seatInfoId),seatsSignature:JSON.stringify(s.held),pricesSignature:JSON.stringify(s.prices||[]),confirmed:s.confirmed===true,validated:s.validated===true,route:s.route||null,cancelled:s.cancelled===true,mutationStarted:s.mutationStarted,at:Date.now()}));
-  const summary=s=>({stage:s.stage,status:s.status||'pending',code:s.code||null,httpStatus:s.httpStatus||null,apiCode:s.apiCode||null,heldCount:s.held.length,confirmed:s.confirmed===true,validated:s.validated===true,requestCount:s.requestCount,route:s.route||null,...(s.changedIds?{changedIds:s.changedIds}:{}),...(s.unavailableIds?{unavailableIds:s.unavailableIds}:{})});
+  const summary=s=>({stage:s.stage,status:s.status||'pending',code:s.code||null,httpStatus:s.httpStatus||null,apiCode:s.apiCode||null,heldCount:s.held.length,confirmed:s.confirmed===true,validated:s.validated===true,requestCount:s.requestCount,route:s.route||null,...(s.changedIds?{changedIds:s.changedIds}:{}),...(s.unavailableIds?{unavailableIds:s.unavailableIds}:{}),...(s.priceAssessment?{priceAssessment:s.priceAssessment}:{})});
   let s=window.__ticketHttpBooking;
   if(arg.action==='begin'){
     if(typeof arg.runId!=='string'||arg.runId.length>120||!Number.isFinite(arg.expiresAt)||Date.now()>arg.expiresAt)throw Error('HTTP_COMMAND_EXPIRED');
@@ -138,7 +172,7 @@ async function httpBookingAction(arg={}){
       if(!s.blocks.length)s.stage=s.resumeSelected?'prices':s.stopAfterSeats?'status':'prices';
     }else if(s.stage==='prices'){
       const c=s.context,params=new URLSearchParams({placeCode:c.goods.placeCode,playSeq:c.playSeq.playSeq,bizCode:c.bizCode||'',entMemberCode:c.entMemberCode||'',seatType:c.goods.kindOfGoods==='01007'&&c.goods.isSportsGroup?'SPORTS':'DEFAULT',seatGrade:s.seats.map(v=>v.gradeCode).join(',')});
-      const {data}=await request('/onestop/api/prices/'+c.goods.goodsCode+'?'+params);check();s.prices=planAdultPrices(data,s.resume?s.held:s.records);s.stage=s.resume?'validate':s.resumeSelected?'confirm':'status';
+      const {data}=await request('/onestop/api/prices/'+c.goods.goodsCode+'?'+params);check();const plan=planStandardPrices(data,s.resume?s.held:s.records);s.prices=plan.prices;s.priceAssessment=plan.assessment;s.stage=s.resume?'validate':s.resumeSelected?'confirm':'status';
     }else if(s.stage==='status'){
       // The native client indexes MSB-first hex status bits by the complete,
       // unfiltered seatMeta order. This also validates seats outside the viewport.
@@ -179,7 +213,7 @@ async function httpBookingAction(arg={}){
       if(!s.held.length){sessionStorage.removeItem('interpark/preReserveExpireTime');s.stage='released';s.status='conflict';}
     }else throw Error('HTTP_STAGE_INVALID');
     receipt(s);
-  }catch(error){s.status=s.inFlightMutation||s.held.length?'uncertain':'blocked';s.code=/^[A-Z_]+$/.test(error.message)?error.message:'HTTP_UNEXPECTED_ERROR';if(s.status==='blocked')s.stage='rejected';receipt(s);}
+  }catch(error){if(error.priceAssessment)s.priceAssessment=error.priceAssessment;s.status=s.inFlightMutation||s.held.length?'uncertain':'blocked';s.code=/^[A-Z_]+$/.test(error.message)?error.message:'HTTP_UNEXPECTED_ERROR';if(s.status==='blocked')s.stage='rejected';receipt(s);}
   finally{s.pending=false;s.inFlightMutation=false;}
   return summary(s);
 }
@@ -221,4 +255,4 @@ async function httpBookingNavigate({runId,expected,expiresAt,syncOnly=false,chec
   if(syncOnly)return {synchronized:true};
   const moved=await window.next.router.push(r.route);if(!moved)throw Error('HTTP_NAVIGATION_NOT_CONFIRMED');return {dispatched:true};
 }
-module.exports={planAdultPrices,httpBookingAction,httpBookingNavigate};
+module.exports={planStandardPrices,httpBookingAction,httpBookingNavigate};
