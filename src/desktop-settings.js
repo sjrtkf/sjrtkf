@@ -2,7 +2,6 @@
 const fs=require('node:fs');
 const path=require('node:path');
 const {normalizePreferences}=require('./preferences');
-const {normalizeVenueState}=require('./venue-profiles');
 const POSTSEASON='https://nol.yanolja.com/ticket/genre/sports/postseason';
 
 function entryUrl(value){
@@ -27,11 +26,11 @@ function readJson(file,limit=256*1024){
 }
 function migrateSettings({destination,sources}){
   const copied=[];
-  for(const [name,clean,limit] of [['preferences.json',normalizePreferences],['settings.json',cleanSettings],['venue-profiles.json',normalizeVenueState,2*1024*1024]]){
+  for(const [name,clean] of [['preferences.json',normalizePreferences],['settings.json',cleanSettings]]){
     const target=path.join(destination,name);if(fs.existsSync(target))continue;
     for(const source of sources){
       try{
-        const value=clean(readJson(path.join(source,name),limit));
+        const value=clean(readJson(path.join(source,name)));
         fs.mkdirSync(destination,{recursive:true});
         fs.writeFileSync(target,JSON.stringify(value,null,2),{flag:'wx'});copied.push(name);break;
       }catch(error){if(error.code==='EEXIST')break;}

@@ -30,14 +30,9 @@ test('migration never overwrites current preferences and safely ignores malforme
   fs.writeFileSync(path.join(old,'settings.json'),' '.repeat(256*1024+1));assert.deepEqual(migrateSettings({destination:dest,sources:[old]}),[]);
 });
 
-test('v0.7 venue migration preserves active profile and priorities without copying extra private fields',t=>{
-  const {old,dest}=fixture(t);const name='venue-profiles.json';
-  const legacy={version:1,activeId:'gangwon-fc',token:'private',profiles:[{id:'gangwon-fc',name:'spoofed',preferences:{quantity:3,areas:['본부석'],blocks:['W4'],tiers:[{name:'앞열',areas:['본부석'],maxRow:5}],cookie:'private'}}]};
-  const original=JSON.stringify(legacy);fs.writeFileSync(path.join(old,name),original);
-  assert.deepEqual(migrateSettings({destination:dest,sources:[old]}),[name]);
-  const migrated=JSON.parse(fs.readFileSync(path.join(dest,name),'utf8')),profile=migrated.profiles.find(p=>p.id==='gangwon-fc');
-  assert.equal(migrated.activeId,'gangwon-fc');assert.equal(profile.name,'강원 FC 경기 테스트');assert.equal(profile.preferences.quantity,3);assert.deepEqual(profile.preferences.blocks,['W4']);assert.equal(profile.preferences.tiers[0].maxRow,5);assert.equal(JSON.stringify(migrated).includes('private'),false);assert.equal(fs.readFileSync(path.join(old,name),'utf8'),original);
-  assert.deepEqual(migrateSettings({destination:dest,sources:[old]}),[]);
+test('removed profile files are not restored by migration',t=>{
+  const {old,dest}=fixture(t);fs.writeFileSync(path.join(old,'venue-profiles.json'),JSON.stringify({version:1,activeId:'legacy',profiles:[]}));
+  assert.deepEqual(migrateSettings({destination:dest,sources:[old]}),[]);assert.equal(fs.existsSync(path.join(dest,'venue-profiles.json')),false);
 });
 test('offscreen or unreachable title bar restores to the primary monitor; existing second monitor position stays usable',()=>{
   assert.deepEqual(visibleBounds({x:3000,y:0,width:400,height:900},[primary],primary),{x:0,y:0,width:400,height:960});

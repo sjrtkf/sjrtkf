@@ -34,5 +34,5 @@ function forgetSeats(run,ids){
   const rejected=new Set(ids);
   for(const [name,rows] of run.seatMaps||[])run.seatMaps.set(name,rows.filter(row=>!rejected.has(row.id)));
 }
-function resetSearch(run){run.jobVisits=new Map();run.seatMaps=new Map();run.metadataCooldown?.clear();}
+function resetSearch(run){run.jobVisits=new Map();run.seatMaps=new Map();run.priceExcludedGrades=new Set();run.metadataCooldown?.clear();}
 module.exports={jobKey,nextJob,rememberMap,pooledSeats,forgetSeats,resetSearch};

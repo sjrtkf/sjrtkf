@@ -12,4 +12,6 @@ function setup(){
   return {api:context.audit,release:()=>release(),armed:()=>armCount,calls};
 }
 test('main 시작 준비 중 중지는 카드 클릭을 막고 정리 완료 후 잠금을 푼다',async()=>{const t=setup();await t.api.command('start',{key:'fixture',openAt:Date.now()+10000});const stop=t.api.command('stop');assert.equal(t.api.getRunner().cancelled,true);await assert.rejects(t.api.command('start',{key:'fixture'}),/진행 중/);t.release();await stop;assert.equal(t.armed(),0);assert.equal(t.api.getRunner(),null);});
-test('main 실행 중 대상창·수동선택·설정 변경은 서버 호출 전 거절한다',async()=>{const t=setup();await t.api.command('start',{key:'fixture'});for(const action of ['target','choose','complete','preferences','seat','home'])await assert.rejects(t.api.command(action,2),/진행 중/);const stop=t.api.command('stop');t.release();await stop;assert.equal(t.armed(),0);});
+test('main 실행 중 대상창·설정 변경은 서버 호출 전 거절한다',async()=>{const t=setup();await t.api.command('start',{key:'fixture'});for(const action of ['target','preferences','home'])await assert.rejects(t.api.command(action,2),/진행 중/);const stop=t.api.command('stop');t.release();await stop;assert.equal(t.armed(),0);});
+
+test('구형 실행점도 제거한 좌석 수동 명령을 지원하지 않는다',async()=>{const t=setup();for(const action of ['scan','seat','catalog','recommend','choose','complete','venueSelect','venueCreate'])await assert.rejects(t.api.command(action,{}),/지원하지 않는 동작/);assert.deepEqual(t.calls,[]);assert.equal(t.api.getRunner(),null);});

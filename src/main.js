@@ -4,7 +4,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const {pathToFileURL} = require('node:url');
 const {performance}=require('node:perf_hooks');
-const {DEMO_PROFILE, isHttps, scanScript, actionScript} = require('./seat-core');
+const {isHttps} = require('./seat-core');
 const liveAdapter = require('./live-adapter');
 const {normalizePreferences,rankGroups,gradePlan}=require('./preferences');
 const {parseOpening,clockSample,bestClock,serverClockSample,clockForGate,SERVER_TIME_URL}=require('./timing');
@@ -29,16 +29,15 @@ let preferences=normalizePreferences(),clockInfo=null,runner=null,powerId=null;
 const runs=new RunControl();let lastRun=null;
 const preferencesPath=path.join(dataRoot,'preferences.json');
 try{preferences=normalizePreferences(JSON.parse(fs.readFileSync(preferencesPath,'utf8')));}catch{}
-const targets = new Map(), seatRefs = new Map();
+const targets = new Map();
 const metaStores=new Map(),gradeStores=new Map(),networkStores=new Map(),scopeVersions=new Map();
-let nextSeat = 0;
 function state(message) {
   if (closing || !win || win.isDestroyed() || !win.webContents || win.webContents.isDestroyed()) return;
   win.webContents.send('helper:state', {message, target: active, revision,preferences,clockInfo,running:!!runner,runStatus:runner?.status,
     entry:runner?.entry,lastRun,windows: [...targets.values()].filter(w => !w.isDestroyed()).map(w => ({id:w.id, title:w.getTitle() || '예매 페이지', url:w.getURL()}))});
 }
 function current() { const wc = targets.get(active); if (!wc || wc.isDestroyed()) throw new Error('예매 창을 먼저 열어 주세요.'); return wc; }
-function invalidate(message) { revision++; seatRefs.clear(); state(message); }
+function invalidate(message) { revision++; state(message); }
 function track(wc) {
   if(!wc||wc.isDestroyed())return;
   const wcId=wc.id;
@@ -87,43 +86,6 @@ function track(wc) {
   wc.on('destroyed', () => { if(runner?.targetId===wcId)void stopRun('실행 대상 창이 닫혀 중지했습니다.');targets.delete(wcId);metaStores.delete(wcId);gradeStores.delete(wcId);networkStores.delete(wcId);scopeVersions.delete(wcId);if(active === wcId)active=targets.has(mainId)?mainId:[...targets.keys()][0];if(closing)return;invalidate('예매 창이 닫혔습니다.'); });
 }
 function seedDemo(id){const store=metaStores.get(id);if(store)for(const s of metadata.parseMetadata(require('./demo-data')))store.set(s.id,s);}
-async function scan() {
-  const wc = current();
-  seatRefs.clear();
-  const version = ++revision;
-  const scopeVersion=scopeVersions.get(wc.id);
-  if (liveAdapter.supportedUrl(wc.getURL())||wc.getURL()===DEMO) {
-    const data=await wc.executeJavaScriptInIsolatedWorld(1001,[{code:liveAdapter.readScript()}]);
-    if(version!==revision||wc.id!==active||scopeVersion!==scopeVersions.get(wc.id))throw new Error('화면이 변경되었습니다. 다시 확인해 주세요.');
-    const rows=metadata.enrich(data.rows,metaStores.get(wc.id),gradeStores.get(wc.id));
-    const seats=rows.map(row=>{const key=String(++nextSeat);seatRefs.set(key,{live:true,row,wcId:wc.id,revision,url:wc.getURL(),created:Date.now()});return {...row,key};});
-    return {seats,revision,supported:true,message:data.message};
-  }
-  if (wc.getURL() !== DEMO) return {seats:[], revision, supported:false, message:'경기의 예매하기 → 보안문자 입력 → 구역 선택으로 진행한 뒤 좌석을 확인해 주세요.'};
-  const frames = [wc.mainFrame];
-  const seats = [];
-  for (const frame of frames) {
-    if (frame.url !== DEMO) continue;
-    const rows = await wc.executeJavaScriptInIsolatedWorld(1001, [{code:scanScript(DEMO_PROFILE)}]);
-    if (version !== revision || wc.id !== active) throw new Error('화면이 변경되었습니다. 다시 확인해 주세요.');
-    for (const row of rows) if (row.available) {
-      const key = String(++nextSeat);
-      seatRefs.set(key, {frame, row, wcId:wc.id, revision, url:frame.url,created:Date.now()});
-      seats.push({key, label:row.label, available:true});
-    }
-  }
-  return {seats, revision, supported:true, message:`연습 화면의 선택 가능한 좌석 ${seats.length}개 · ${new Date().toLocaleTimeString('ko-KR')}`};
-}
-async function seatAction(payload) {
-  const ref = seatRefs.get(payload?.key);
-  if (!ref || ref.revision !== revision || ref.wcId !== active || current().getURL() !== ref.url || Date.now()-ref.created>30000) throw new Error('좌석 목록이 만료되었습니다. 다시 확인해 주세요.');
-  await current().executeJavaScriptInIsolatedWorld(1001,[{code:ref.live?liveAdapter.clickScript(ref.row,payload.action):actionScript(DEMO_PROFILE, ref.row, payload.action)}]);
-  if (payload.action === 'click') { seatRefs.clear(); revision++; }
-  const wc = current();
-  const owner = BrowserWindow.fromWebContents(wc);
-  if (owner) owner.focus(); else { win.focus(); wc.focus(); }
-  return {message: payload.action === 'click' ? '좌석에 클릭을 전달했습니다. 사이트의 선택 결과를 확인해 주세요.' : '좌석 위치로 이동했습니다.'};
-}
 const js=(wc,fn,arg)=>wc.executeJavaScriptInIsolatedWorld(1001,[{code:`(${fn.toString()})(${JSON.stringify(arg)??''})`}]);
 function savePreferences(input){preferences=normalizePreferences(input);fs.mkdirSync(dataRoot,{recursive:true});fs.writeFileSync(preferencesPath,JSON.stringify(preferences,null,2));return preferences;}
 function setRunStatus(run,text){if(runs.current!==run)return;if(run.status!==text){run.status=text;run.timeline.push({stage:text,elapsedMs:Date.now()-run.started});state(text);}}
@@ -216,7 +178,6 @@ async function candidatesFor(wc,p,options={}){
 async function selectCandidates(wc,run,groups){
   return selection.chooseCandidates({groups,adapter:selectionAdapter(wc,run),signal:run.signal,preferences:run.preferences,excludedIds:run.excludedIds,excludedGroups:run.excludedGroups,onStatus:text=>setRunStatus(run,text)});
 }
-async function recommend(){const result=await scan();const groups=rankGroups(result.seats,preferences);return {...result,groups,message:groups.length?`선호 조건에 맞는 ${groups.length}개 조합 · ${preferences.quantity}매`:'현재 표시된 좌석 중 조건을 검증할 수 있는 조합이 없습니다.'};}
 function launch(run,task){
   const stopWatchers=()=>Promise.allSettled([...run.windowIds].map(id=>{const wc=targets.get(id);return wc&&!wc.isDestroyed()?js(wc,()=>{window.__bearsEntry?.stop();window.__bearsGate?.stop();}):null;}));
   run.task=(async()=>{try{const result=await task();await stopWatchers();finishRun(run,result?.message||'작업이 끝났습니다.');return result;}catch(error){await stopWatchers();finishRun(run,(run.signal.aborted?'중지했습니다. ':'')+error.message);throw error;}})();
@@ -322,22 +283,12 @@ async function command(action, payload) {
     case 'target': if (!targets.has(Number(payload))) throw new Error('닫힌 창입니다.'); active = Number(payload); invalidate('대상 창을 변경했습니다.'); return {};
     case 'focus': { const wc=current(); const owner=BrowserWindow.fromWebContents(wc); if(owner) owner.focus(); else win.focus(); wc.focus(); return {message:'예매 화면에서 보안코드를 직접 입력해 주세요.'}; }
     case 'zoom': { const wc=current(); const delta=Number(payload); if(![-0.1,0,0.1].includes(delta)) throw new Error('잘못된 배율'); wc.setZoomFactor(delta === 0 ? 1 : Math.max(.7,Math.min(1.8,wc.getZoomFactor()+delta))); return {}; }
-    case 'scan': return scan();
-    case 'seat': return seatAction(payload);
     case 'preferences': savePreferences(payload);state('선호 조건을 저장했습니다.');return {preferences};
     case 'games': return games();
     case 'clock': return syncClock();
     case 'start': return startRun(payload);
     case 'stop': await stopRun('자동 진행을 중지했습니다.');return {};
     case 'code': await js(runner?targetFor(runner):current(),flow.enterCode,String(payload||'').trim().toUpperCase());return {message:'보안문자를 입력했습니다. 인증 결과를 확인합니다.'};
-    case 'recommend': if(payload?.preferences)preferences=normalizePreferences(payload.preferences);return recommend();
-    case 'choose': {const wc=current();if(!liveAdapter.supportedUrl(wc.getURL())&&wc.getURL()!==DEMO)throw Error('좌석 화면에서 실행해 주세요.');const run=beginRun(wc,payload?.preferences,'manual');return launch(run,async()=>{const {groups}=await candidatesFor(wc,run.preferences);runs.assert(run);if(!groups.length)throw Error('현재 지도에 조건에 맞는 조합이 없습니다.');return selectCandidates(wc,run,groups);});}
-    case 'complete': {const wc=current();if(!liveAdapter.supportedUrl(wc.getURL())&&wc.getURL()!==DEMO)throw Error('좌석 화면에서 실행해 주세요.');const run=beginRun(wc,payload?.preferences,'manual');return launch(run,async()=>{
-      const adapter=selectionAdapter(wc,run),info=await adapter.snapshot();runs.assert(run);
-      const seats=metadata.enrich(info.selected.map(id=>({id,available:true})),metaStores.get(wc.id),gradeStores.get(wc.id));
-      if(!rankGroups(seats,run.preferences).some(g=>g.seats.length===info.selected.length&&g.seats.every(s=>info.selected.includes(s.id))))throw Error('선택된 좌석이 현재 매수·연석·구역·열 조건을 만족하는지 확인하지 못했습니다.');
-      return selection.completeSelection({adapter,signal:run.signal,preferences:run.preferences,onStatus:text=>setRunStatus(run,text)});
-    });}
     default: throw new Error('지원하지 않는 동작입니다.');
   }
 }
@@ -362,16 +313,5 @@ app.whenReady().then(async () => {
   win.on('close',e=>{if(closeReady)return;if(runner){e.preventDefault();void stopRun('종료 전 선택 정리를 확인했습니다.').finally(()=>{closing=true;closeReady=true;win.close();});return;}closing=true;});
   win.on('closed',()=>{const remaining=[...targets.values()];targets.clear();for(const wc of remaining)if(!wc.isDestroyed())wc.close();app.quit();});
   await win.loadURL(SHELL);
-  if(smoke) {
-    process.once('uncaughtException',error=>{console.error(error);app.exit(1);});
-    const report=await require('./smoke')({app,win,view,command,js,targets});
-    app.once('will-quit',()=>{
-      report.checks.push('메인 창 종료 및 하위 화면 정리 오류 없음');
-      fs.mkdirSync(path.join(app.getAppPath(),'work'),{recursive:true});
-      fs.writeFileSync(path.join(app.getAppPath(),'work','smoke-result-v0.4.json'),JSON.stringify(report,null,2));
-      console.log(JSON.stringify(report));
-    });
-    win.close();
-  }
 }).catch(e=>{console.error(e);app.exit(1);});
 app.on('window-all-closed',()=>app.quit());

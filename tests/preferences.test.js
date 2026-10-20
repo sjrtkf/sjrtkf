@@ -23,6 +23,21 @@ test('정확한 이름·코드로 구역과 블록을 제한하고 빈 블록은
   assert.equal(rankGroups(seats,{quantity:1,areas:['블루존'],blocks:['3-7']})[0].seats[0].number,2);
   assert.equal(gradePlan([{name:'블루존',code:'B',count:4}],{areas:['B'],fallbackAnywhere:false}).length,1);
 });
+
+test('구역·블록 코드 1과 10을 혼동하지 않고 복합 블록 키 전체를 구분한다',()=>{
+  const seats=[
+    make(4,1,{id:'wanted',grade:'내야석',gradeCode:'1',block:'1',blockKey:'001:1'}),
+    make(1,1,{id:'other-grade',grade:'내야 특별석',gradeCode:'10',block:'1',blockKey:'001:1'}),
+    make(1,1,{id:'other-block',grade:'내야석',gradeCode:'1',block:'10',blockKey:'001:10'}),
+    make(1,1,{id:'other-map',grade:'내야석',gradeCode:'1',block:'1',blockKey:'002:1'})
+  ];
+  for(const requireTogether of [true,false]){
+    const prefs={quantity:1,requireTogether,fallbackAnywhere:false,tiers:[{areas:['1'],blocks:['001:1']}]};
+    assert.deepEqual(rankGroups(seats,prefs).map(g=>g.seats[0].id),['wanted']);
+    assert.deepEqual(rankGroups(seats,{...prefs,tiers:[{areas:['1'],blocks:['1']}]}).map(g=>g.seats[0].id),['other-map','wanted']);
+  }
+  assert.deepEqual(gradePlan([{name:'내야 특별석',code:'10',count:10},{name:'내야석',code:'1',count:10}],{areas:['1'],fallbackAnywhere:false}).map(g=>g.name),['내야석']);
+});
 test('설정 매수 범위를 검증한다',()=>{for(const n of [0,5,1.5,NaN])assert.throws(()=>normalizePreferences({quantity:n}));assert.equal(normalizePreferences().quantity,2);});
 test('이전 직접 입력 설정도 자동 입력으로 전환한다',()=>{
   assert.equal(normalizePreferences({autoCaptcha:true,manualCaptchaAssist:true}).manualCaptchaAssist,false);

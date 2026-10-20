@@ -37,6 +37,10 @@ const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypt
     if(!source.equals(fs.readFileSync(path.join(output,'chrome-extension',name))))throw Error('확장 파일 불일치: '+name);report.checkedFiles++;
   }
   if(listPackage(archive).some(p=>/^[/\\](?:work|outputs|tests|user-data|settings)(?:[/\\]|$)/.test(p)))throw Error('사용자 설정 또는 테스트 자료가 패키지에 포함되었습니다.');
+  const removedFiles=['src/venue-profiles.js','src/seat-catalog.js','src/smoke.js'];
+  const packagedPaths=new Set(listPackage(archive).map(p=>p.replace(/\\/g,'/').replace(/^\//,'')));
+  for(const file of removedFiles)if(fs.existsSync(path.join(root,file))||packagedPaths.has(file))throw Error('삭제한 기능 파일이 남아 있습니다: '+file);
+  report.removedFeatureFilesAbsent=removedFiles;
   const manifest=JSON.parse(fs.readFileSync(path.join(output,'chrome-extension','manifest.json')));
   if(manifest.version!==pkg.version)throw Error('앱과 확장 버전 불일치');
   for(const name of [manifest.background.service_worker,manifest.action.default_popup,...manifest.content_scripts.flatMap(s=>s.js)])if(!fs.existsSync(path.join(output,'chrome-extension',name)))throw Error('확장 파일 누락: '+name);

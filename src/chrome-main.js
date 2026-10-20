@@ -19,7 +19,6 @@ const {CaptchaService}=require('./captcha-service');
 const {ManualCaptcha}=require('./manual-captcha');
 const entry=require('./entry');
 const desktopSettings=require('./desktop-settings');
-const {createVenueStore}=require('./venue-profiles');
 const {safeLastRun}=require('./run-diagnostics');
 const {createRunLog}=require('./run-log');
 const {createPairingStore}=require('./pairing-store');
@@ -78,16 +77,13 @@ async function updateExtension(){
   return {message:'고정 확장 폴더를 준비했습니다. 최초 한 번 이 폴더를 Chrome에 등록하고 연결하세요.'};
 }
 try{preferences=normalizePreferences(JSON.parse(fs.readFileSync(preferencesPath,'utf8')));}catch{}
-const venueStore=createVenueStore({filePath:path.join(dataRoot,'venue-profiles.json'),initialPreferences:preferences});
-preferences=venueStore.getPreferences();
-const targets = new Map(), seatRefs = new Map();
+const targets = new Map();
 const metaStores=new Map(),gradeStores=new Map(),scopeVersions=new Map();
-let nextSeat = 0;
 function state(message) {
   if (closing || !win || win.isDestroyed() || !win.webContents || win.webContents.isDestroyed()) return;
   manualCaptcha.invalidateIfStale();
   win.webContents.send('helper:state', {appVersion:require('../package.json').version,message, target: active, revision,preferences,clockInfo,running:!!runner,runStatus:runner?.status,
-    entry:runner?.entry,retry:runner?.retry?.snapshot(),venueProfiles:venueStore.getState(),lastRun,diagnosticWarning,preflight:preflightResult,runDiagnostics:runner?{metrics:runner.metrics.snapshot(),diagnosis:runner.diagnosis||null}:null,browserStatus,captchaStatus,manualCaptcha:manualCaptcha.status,pageUrl,desktop:desktopState(),windows: [...targets.values()].filter(w => !w.isDestroyed()).map(w => ({id:w.id, title:w.getTitle() || '예매 페이지', url:w.getURL()}))});
+    entry:runner?.entry,retry:runner?.retry?.snapshot(),lastRun,diagnosticWarning,preflight:preflightResult,runDiagnostics:runner?{metrics:runner.metrics.snapshot(),diagnosis:runner.diagnosis||null}:null,browserStatus,captchaStatus,manualCaptcha:manualCaptcha.status,pageUrl,desktop:desktopState(),windows: [...targets.values()].filter(w => !w.isDestroyed()).map(w => ({id:w.id, title:w.getTitle() || '예매 페이지', url:w.getURL()}))});
 }
 function manualAdapter(wc,run){
   const {assertCurrent}=captchaAdapter(wc,run);
@@ -166,7 +162,7 @@ function createTray(){
 }
 function assertAvailable(wc){if(wc.missingSince!=null)throw Error('예매창이 화면을 전환하는 중입니다. 새로운 동작을 보내지 않고 기다립니다.');}
 function current() { const wc = targets.get(active); if (!wc || wc.isDestroyed()) throw new Error('예매 창을 먼저 열어 주세요.'); assertAvailable(wc);return wc; }
-function invalidate(message) { revision++; seatRefs.clear(); preflightResult=null; state(message); }
+function invalidate(message) { revision++; preflightResult=null; state(message); }
 function entryTransitionAllowed(run,wc){return run?.kind==='auto'&&!run.seatScope&&!liveAdapter.supportedUrl(wc.getURL())&&!wc.isDemo();}
 function observeTarget(run,wc,listingParent=null){
   const previous=run.observerTask;
@@ -315,32 +311,12 @@ function onBrowserEvent(event){
   }else if(['error','metadata-error','observer-error'].includes(event.type)){runLog.event('browser-error',{kind:event.type,message:event.message});state(event.message||'Chrome 좌석 정보 연결을 확인해 주세요.');}
 }
 function seedDemo(id){const store=metaStores.get(id);if(store)for(const s of metadata.parseMetadata(require('./demo-data')))store.set(s.id,s);}
-async function scan(){
-  const wc=current();seatRefs.clear();const version=++revision,scope=scopeVersions.get(wc.id);
-  if(!liveAdapter.supportedUrl(wc.getURL())&&!wc.isDemo())return {seats:[],revision,supported:false,message:'Chrome에서 구역 또는 좌석 화면을 연 뒤 확인해 주세요.'};
-  await ensureNetwork(wc);
-  const data=await measured(wc,'seat-read',()=>wc.readSeats());
-  if(version!==revision||wc.id!==active||scope!==scopeVersions.get(wc.id))throw Error('화면이 변경되었습니다. 다시 확인해 주세요.');
-  const rows=metadata.enrich(data.rows,metaStores.get(wc.id),gradeStores.get(wc.id));
-  const seats=rows.map(row=>{const key=String(++nextSeat);seatRefs.set(key,{row,wcId:wc.id,revision,url:wc.getURL(),created:Date.now()});return {...row,key};});
-  const missingDetails=rows.some(row=>row.kind==='seat')&&!rows.some(row=>row.kind==='seat'&&hasSeatDetails(row));
-  return {seats,revision,supported:true,message:missingDetails?'좌석 상세 정보가 아직 없습니다. 연결 전에 좌석 화면을 열었다면 Chrome에서 구역을 다시 선택해 주세요.':data.message};
-}
-async function seatAction(payload) {
-  const ref = seatRefs.get(payload?.key);
-  if (!ref || ref.revision !== revision || ref.wcId !== active || current().getURL() !== ref.url || Date.now()-ref.created>30000) throw new Error('좌석 목록이 만료되었습니다. 다시 확인해 주세요.');
-  if(payload.action==='click'&&!current().isDemo())throw Error('실제 좌석 선택은 저장한 조건으로 HTTP 실행해 주세요. 개별 좌석 클릭은 사용하지 않습니다.');
-  await current().seatAction(ref.row,payload.action);
-  if (payload.action === 'click') { seatRefs.clear(); revision++; }
-  await current().focus();
-  return {message: payload.action === 'click' ? '좌석에 클릭을 전달했습니다. 사이트의 선택 결과를 확인해 주세요.' : '좌석 위치로 이동했습니다.'};
-}
 function measured(wc,action,task){const run=runs.current;return run?.windowIds.has(wc.id)?run.metrics.measure(action,task):task();}
 const js=(wc,fn,arg)=>{assertAvailable(wc);const name=typeof fn==='string'?fn:fn?.name;const action=name==='scene'?'screen-read':name==='liveRead'?'seat-read':name==='clickKnown'?'screen-action':name==='stopWatchers'?'cleanup':name==='readDetails'?'seat-details':'page-command';return Promise.resolve(measured(wc,action,()=>wc.invoke(fn,arg))).then(result=>{if(runs.current?.windowIds.has(wc.id)&&['prepareEntry','armGate','liveAction','clickKnown','dismissConflict','dismissEmptySelection','captchaSubmit','captchaRefresh'].includes(name))runLog.event('code-action',{action:name,result:result?.status||result?.phase||'returned'});return result;}).catch(error=>{error.message=siteCodeMessage(error.message);if(runs.current?.windowIds.has(wc.id))runLog.event('command-error',{action:name,message:error.message});throw error;});};
 function savePreferences(input){
   preflightResult=null;
   const normalized=normalizePreferences(input);
-  venueStore.saveActive(normalized);preferences=normalized;
+  preferences=normalized;
   fs.mkdirSync(dataRoot,{recursive:true});fs.writeFileSync(preferencesPath,JSON.stringify(preferences,null,2));return preferences;
 }
 function setRunStatus(run,text){if(runs.current!==run)return;if(run.status!==text){run.status=text;const phase=phaseForStatus(text);run.metrics.stage(phase.code,phase.label);const elapsedMs=run.metrics.snapshot().elapsedMs;run.timeline.push({stage:text,code:phase.code,elapsedMs});runLog.event('stage',{stage:phase.code,message:text,elapsedMs});if(run.timeline.length>200)run.timeline.splice(0,run.timeline.length-200);state(text);}}
@@ -506,7 +482,7 @@ async function observeListingTransition(run,wc,original,error){
   }
 }
 async function scheduleGateClock(run,wc,status,{listing=false}={}){
-  if(run.entry.strategy!=='clock'||!run.clockEligible||run.entry.trigger||run.entry.requestCount||status?.phase!=='armed'||status.clock?.firedAtMono!=null&&(!listing||status.clock.outcome!=='stale'))return;
+  if(run.entry.strategy!=='clock'||!run.clockEligible||run.entry.trigger||run.entry.requestCount||status?.phase!=='armed'||status.clock?.firedAtMono!=null&&status.clock.outcome!=='stale')return;
   const monoNow=performance.now(),estimate=clockForGate(clockInfo,{monoNow});
   const plannedServerNow=estimate?.serverNowMs??Date.now()+(clockInfo?.offsetMs||0);
   // Refresh before opening in the background; never block the activation observer on a clock fetch.
@@ -583,7 +559,7 @@ function rankRunSeats(run,wc,rows,{remember=true}={}){
   if(scattered&&remember)seatSearch.rememberMap(run,rows);
   const pool=scattered?metadata.enrich(seatSearch.pooledSeats(run),metaStores.get(wc.id),gradeStores.get(wc.id)):rows;
   const tier=run.currentJob?.tierIndex;
-  return rankGroups(pool,run.preferences,{...(scattered?{maxTierIndex:tier}:{tierIndex:tier}),excludedIds:run.excludedIds,excludedGroups:run.excludedGroups});
+  return rankGroups(pool.filter(seat=>!run.priceExcludedGrades?.has(String(seat.gradeCode))),run.preferences,{...(scattered?{maxTierIndex:tier}:{tierIndex:tier}),excludedIds:run.excludedIds,excludedGroups:run.excludedGroups});
 }
 async function refreshChangedSeats(wc,run,ids,seats){
   const scope=scopeVersions.get(wc.id),documentId=wc.documentId;
@@ -662,19 +638,23 @@ async function recoverSeatDetails(run,wc,rows){
 }
 async function selectCandidates(wc,run,groups){
   if(!wc.isDemo()){
-    let attempted=0;
+    let attempted=0,priceUnavailable=false;
     for(const group of groups){
-      runs.assert(run);const key=JSON.stringify(group.seats.map(v=>v.id).sort());if(run.excludedGroups.has(key)||group.seats.some(v=>run.excludedIds.has(v.id)))continue;
-      if(attempted>=20)return {completed:false,exhausted:true,limited:true,attempted};
+      runs.assert(run);const key=JSON.stringify(group.seats.map(v=>v.id).sort());if(run.excludedGroups.has(key)||group.seats.some(v=>run.excludedIds.has(v.id)||run.priceExcludedGrades?.has(String(v.gradeCode))))continue;
+      if(attempted>=20)return {completed:false,exhausted:true,limited:true,attempted,priceUnavailable};
       attempted++;run.retry.attempted++;
       const breakdown=group.tierCounts?.map((count,index)=>count?`${index+1}순위 ${count}매`:null).filter(Boolean).join(' · ');
       runLog.event('seat-candidate-attempt',{kind:group.fallback?'fallback':'priority',message:breakdown||group.tierName||'기본 조건',cycle:run.retry.cycle,count:run.retry.attempted,selectedCount:group.seats.length,blockCount:new Set(group.seats.map(seat=>seat.blockKey||seat.block)).size});
       const result=await runHttpBooking(wc,run,{seats:group.seats});
+      if(result.priceUnavailable){
+        run.priceExcludedGrades??=new Set();for(const grade of result.unavailableGrades)run.priceExcludedGrades.add(grade);
+        priceUnavailable=true;setRunStatus(run,result.message);continue;
+      }
       if(result.changedIds){await refreshChangedSeats(wc,run,result.changedIds,group.seats);return {completed:false,retrySeats:true,attempted};}
       if(result.conflict){run.excludedGroups.add(key);for(const id of result.unavailableIds||[])run.excludedIds.add(id);seatSearch.forgetSeats(run,result.unavailableIds||[]);continue;}
       return {...result,attempted};
     }
-    return {completed:false,exhausted:true,attempted};
+    return {completed:false,exhausted:true,attempted,priceUnavailable};
   }
   const result=await selection.chooseCandidates({groups,adapter:selectionAdapter(wc,run),signal:run.signal,preferences:run.preferences,excludedIds:run.excludedIds,excludedGroups:run.excludedGroups,onStatus:text=>setRunStatus(run,text)});
   run.retry.attempted+=result.attempted||0;if(result.selectedIds)run.priceOwnedIds=result.selectedIds;return result.completed?finishPriceSelection(wc,run,result):result;
@@ -696,6 +676,25 @@ async function runHttpBooking(wc,run,{seats,resumePrice=false,resumeSelected=fal
     runLog.event('http-booking',{stage:status.stage,result:status.status,message:[status.code,status.apiCode].filter(Boolean).join(' '),status:status.httpStatus,count:status.requestCount,selectedCount:status.heldCount});
     if(status.status==='conflict'){setRunStatus(run,'충돌 좌석 HTTP 해제 확인 · 다음 후보');return {completed:false,conflict:true,unavailableIds:status.unavailableIds};}
     if(status.status==='blocked'&&status.code==='HTTP_METADATA_CHANGED'&&status.heldCount===0&&Array.isArray(status.changedIds)&&status.changedIds.length&&status.changedIds.every(id=>seats?.some(seat=>seat.id===id)))return {completed:false,changedIds:status.changedIds};
+    if(!resumePrice&&!resumeSelected&&status.status==='blocked'&&status.code==='STANDARD_PRICE_UNAVAILABLE'&&status.heldCount===0){
+      const assessed=Array.isArray(status.priceAssessment?.groups)?status.priceAssessment.groups:[];
+      const counts=new Map();for(const seat of seats||[]){const grade=String(seat.gradeCode);counts.set(grade,(counts.get(grade)||0)+1);}
+      const completeAssessment=assessed.length===counts.size&&new Set(assessed.map(group=>group?.seatGrade)).size===counts.size
+        &&assessed.every(group=>group&&counts.get(group.seatGrade)===group.seatCount&&Array.isArray(group.options)&&group.options.length
+          &&(group.selectedIndex===null||Number.isSafeInteger(group.selectedIndex)&&group.selectedIndex>=0&&group.options.some(option=>option?.index===group.selectedIndex&&option.eligible===true)));
+      const failed=assessed.filter(group=>group?.selectedIndex===null);
+      const qualificationReasons=['PRICE_REQUIRES_CERTIFICATION','PRICE_REQUIRES_QUALIFICATION','PRICE_DISCOUNT_UNSUPPORTED'];
+      // Only a complete, understood price list can exclude a grade. Unknown
+      // formats, amounts or rules and quantity-only failures still stop below.
+      if(completeAssessment&&failed.length&&failed.every(group=>group.options.every(option=>option?.eligible===false&&Array.isArray(option.reasons)
+          &&option.reasons.some(reason=>qualificationReasons.includes(reason))
+          &&option.reasons.every(reason=>qualificationReasons.includes(reason)||reason==='PRICE_QUANTITY_LIMIT')))){
+        const unavailableGrades=[...new Set(failed.map(group=>group.seatGrade))];
+        const message='자격·할인 조건 가격만 있는 구역을 제외하고 다음 후보를 확인합니다.';
+        runLog.event('seat-price-unavailable',{reason:'qualification-only-prices',message,priceAssessment:status.priceAssessment,gradeCount:unavailableGrades.length});
+        return {completed:false,priceUnavailable:true,unavailableGrades,message};
+      }
+    }
     if(['uncertain','blocked'].includes(status.status)){
       const explanation=({STANDARD_PRICE_UNAVAILABLE:'현재 좌석 등급에서 자동 적용할 수 있는 일반 가격이 없습니다.',PRICE_GRADE_AMBIGUOUS:'좌석 등급과 가격 등급의 연결을 확정하지 못했습니다.',PRICE_RESPONSE_UNSUPPORTED:'사이트의 가격 목록 형식을 확인하지 못했습니다.',ADULT_PRICE_AMBIGUOUS:'일반 가격을 확인하지 못했습니다. 확장 업데이트 적용 후 다시 확인해 주세요.',PRICE_REQUIRES_CERTIFICATION:'추가 인증이 필요한 가격이어서 자동 제출하지 않았습니다.',PRICE_RULE_UNSUPPORTED:'현재 가격의 이용 조건을 자동으로 확인할 수 없습니다.',PRICE_QUANTITY_LIMIT:'선택한 가격의 매수 조건을 충족하지 않습니다.',HTTP_CONTEXT_CHANGED:'처리 중 경기·세션 또는 선택 내용이 바뀌었습니다.',HTTP_OUTCOME_UNKNOWN:'서버의 처리 결과를 확정하지 못해 중복 요청 없이 멈췄습니다.',HTTP_CONFIRMATION_UNKNOWN:'선택 완료 응답 형식을 확인하지 못했습니다.',HTTP_SESSION_EXPIRED:'예매 세션 또는 좌석 유지 시간이 만료됐습니다.',HTTP_PAGE_BLOCKED:'사이트 안내 또는 로딩이 있어 요청을 중지했습니다.'})[status.code]||'HTTP 진행 조건 또는 응답을 확인하지 못했습니다.';
       throw Error(explanation+' ['+status.code+'] 자동 로그를 확인해 주세요. 기존 선택은 임의로 재요청하지 않았습니다.');
@@ -800,24 +799,6 @@ async function finishBookingButton(wc,run,result){
   }
   throw Error('예매하기 후 다음 화면 도착을 확인하지 못했습니다. 중복 요청하지 않았으니 Chrome의 현재 화면을 확인해 주세요.');
 }
-async function readCatalog(){
-  const wc=current();if(!liveAdapter.supportedUrl(wc.getURL()))throw Error('현재 경기의 좌석 화면에서 구역·블록을 읽어 주세요.');
-  await ensureNetwork(wc);
-  const scope=scopeVersions.get(wc.id),documentId=wc.documentId;
-  const expected=directApi.assertIdentity(null,await js(wc,directApi.bookingIdentity));
-  const data=await wc.readSeats();
-  const blockKeys=[...new Set(data.rows.filter(r=>r.kind==='seat'&&!metaStores.get(wc.id)?.has(r.id)).map(r=>r.group).filter(g=>g?.startsWith('seat_block_')).map(g=>g.slice(11)))].slice(0,8);
-  const details={blocks:[],grades:[],gradeConflicts:[]};
-  for(let i=0;i<Math.max(1,blockKeys.length);i+=2){
-    const part=await js(wc,seatDetails.readDetails,{expected,blockKeys:blockKeys.slice(i,i+2),includeGrades:i===0,expiresAt:Date.now()+20000});
-    details.blocks.push(...part.blocks);details.grades.push(...part.grades);details.gradeConflicts.push(...part.gradeConflicts||[]);
-  }
-  if(wc.documentId!==documentId||scopeVersions.get(wc.id)!==scope||current().id!==wc.id)throw Error('목록을 읽는 동안 경기 또는 탭이 바뀌었습니다. 다시 읽어 주세요.');
-  for(const row of metadata.parseMetadata(details.blocks))metaStores.get(wc.id).set(row.id,row);
-  applyGradeDetails(wc,details,null);
-  return require('./seat-catalog').buildCatalog({rows:data.rows,metadata:[...metaStores.get(wc.id).values()],grades:[...gradeStores.get(wc.id)].map(([code,name])=>({code,name})),title:wc.getTitle()});
-}
-async function recommend(){const result=await scan();const groups=rankGroups(result.seats,preferences);return {...result,groups,message:groups.length?`선호 조건에 맞는 ${groups.length}개 조합 · ${preferences.quantity}매`:'현재 표시된 좌석 중 조건을 검증할 수 있는 조합이 없습니다.'};}
 function launch(run,task){
   const stopWatchers=()=>Promise.allSettled([...run.windowIds].map(id=>{const wc=targets.get(id);return wc&&!wc.isDestroyed()&&wc.missingSince==null?js(wc,'stopWatchers'):null;}));
   run.task=(async()=>{try{const result=await task();if(result?.completed===true)run.outcome=result.bookingAdvanced?'booking-advanced':'price-confirmed';await stopWatchers();finishRun(run,result?.message||'작업이 끝났습니다.');return result;}catch(error){run.failureDetail=error.message;await stopWatchers();finishRun(run,run.stopReason||(run.signal.aborted?'중지했습니다. ':'')+error.message);throw error;}})();
@@ -825,7 +806,7 @@ function launch(run,task){
 }
 async function startRun(payload){
   const extensionVersion=bridge.getState().extensionVersion;
-  if(extensionVersion!==undefined&&!seatExtensionCompatible(extensionVersion))throw Error('좌석 등급별 일반 가격 선택에는 v0.9.26 이상 Chrome 확장이 필요합니다. 확장 업데이트 적용 후 다시 연결해 주세요.');
+  if(extensionVersion!==undefined&&!seatExtensionCompatible(extensionVersion))throw Error('좌석 등급별 일반 가격 선택에는 v0.9.27 이상 Chrome 확장이 필요합니다. 확장 업데이트 적용 후 다시 연결해 주세요.');
   if(bridge.getState().bookingNoticeSupported===false)throw Error('예매 안내를 처리하려면 v0.9 폴더의 chrome-extension을 등록하고 새 코드로 다시 연결해 주세요.');
   const requestedPreferences=normalizePreferences(payload?.preferences||preferences);
   if(extensionVersion!==undefined&&!/^0\.9\.(?:[7-9]|[1-9]\d+)$/.test(String(extensionVersion)))throw Error('경기 식별 검증에는 v0.9.7 Chrome 확장이 필요합니다.');
@@ -1202,7 +1183,7 @@ async function autoLoop(run){
           throw Error('좌석 구역 이름을 확정하지 못했습니다. 같은 코드에 서로 다른 이름이 있고 좌석별 이름도 없어 조건을 검증할 수 없습니다. 충돌한 코드·이름은 자동 로그에 저장했습니다.');
         }
         const changed=run.retry.observe(run.currentJob?.name||'current-map',rows);
-        if(changed&&run.mapWaitOnly){run.excludedIds.clear();run.excludedGroups.clear();groups=rankRunSeats(run,wc,rows);}
+        if(changed&&run.mapWaitOnly){run.excludedIds.clear();run.excludedGroups.clear();run.priceExcludedGrades?.clear();groups=rankRunSeats(run,wc,rows);}
         // Before seeing the overview, another area may still offer tier 0.
         // Exhaust only the top tier here, then use nextGrade to inspect it.
         if(!run.currentJob&&!run.gradePlanObserved)groups=groups.filter(group=>group.tierIndex===0);
@@ -1216,7 +1197,7 @@ async function autoLoop(run){
           runs.assert(run);if(!selected.exhausted)return selected;
           if(selected.limited){setRunStatus(run,'20개 후보 확인 · 최신 지도에서 남은 후보를 이어서 확인');continue;}
           if(rankRunSeats(run,wc,rows,{remember:false}).length){setRunStatus(run,'실패한 조합을 제외하고 남은 후보를 이어서 확인');continue;}
-          await nextGrade(run,wc,await runJs(run,wc,flow.scene),'현재 후보들이 선점되어 제외했습니다.');
+          await nextGrade(run,wc,await runJs(run,wc,flow.scene),selected.priceUnavailable?'자격·할인 조건 가격만 있는 구역을 제외하고 다음 구역을 확인합니다.':'현재 후보들이 선점되어 제외했습니다.');
         }
         else{
           const elapsed=Date.now()-run.gradeOpenedAt;
@@ -1282,19 +1263,7 @@ async function command(action, payload) {
     case 'focus': await current().focus();return {message:'Chrome 예매 탭으로 이동했습니다.'};
     case 'zoom': {const delta=Number(payload);if(![-.1,0,.1].includes(delta))throw Error('잘못된 배율');await current().zoom(delta);return {};}
     case 'recordObservation': return saveObservation(current());
-    case 'scan': return scan();
-    case 'seat': return seatAction(payload);
-    case 'preferences': savePreferences(payload);state('현재 구장의 선호 조건을 저장했습니다.');return {preferences,venueProfiles:venueStore.getState()};
-    case 'venueSelect': {
-      preflightResult=null;
-      preferences=venueStore.select(payload?.id,payload?.preferences);
-      state('이전 구장 조건을 저장하고 선택한 구장 설정을 불러왔습니다.');return {preferences,venueProfiles:venueStore.getState(),message:'선택한 구장 설정을 불러왔습니다.'};
-    }
-    case 'venueCreate': {
-      preflightResult=null;
-      preferences=venueStore.create(payload?.name,payload?.preferences);
-      state('현재 조건으로 새 구장 설정을 저장했습니다.');return {preferences,venueProfiles:venueStore.getState(),message:'현재 조건으로 새 구장 설정을 저장했습니다.'};
-    }
+    case 'preferences': savePreferences(payload);state('선호 조건을 저장했습니다.');return {preferences};
     case 'gateOpening': {
       const wc=current(),url=wc.getURL(),doc=wc.documentId,u=new URL(url),match=u.origin==='https://tickets.interpark.com'&&u.pathname.match(/^\/gates\/ticket\/(\d{8})\/?$/);
       if(!match)throw Error('예매 준비 화면을 먼저 선택해 주세요.');
@@ -1327,18 +1296,6 @@ async function command(action, payload) {
       try{await js(runner?targetFor(runner):current(),flow.enterCode,String(payload||'').trim().toUpperCase());return {message:'보안문자를 입력했습니다. 인증 결과를 확인합니다.'};}
       finally{manualCodePending=false;}
     }
-    case 'recommend': if(payload?.preferences)preferences=normalizePreferences(payload.preferences);return recommend();
-    case 'catalog': return readCatalog();
-    case 'choose': {const wc=current();if(!liveAdapter.supportedUrl(wc.getURL())&&!wc.isDemo())throw Error('좌석 화면에서 실행해 주세요.');const run=beginRun(wc,payload?.preferences,'manual');return launch(run,async()=>{await ensureNetwork(wc);runs.assert(run);const {groups}=await candidatesFor(wc,run.preferences);runs.assert(run);if(!groups.length)throw Error('현재 지도에 조건에 맞는 조합이 없습니다. 상세 정보가 없다면 Chrome에서 구역을 다시 선택해 주세요.');return selectCandidates(wc,run,groups);});}
-    case 'complete': {const wc=current();if(!liveAdapter.supportedUrl(wc.getURL())&&!wc.isDemo())throw Error('좌석 화면에서 실행해 주세요.');const run=beginRun(wc,payload?.preferences,'manual');return launch(run,async()=>{
-      await ensureNetwork(wc);runs.assert(run);
-      const adapter=selectionAdapter(wc,run),info=await adapter.snapshot();runs.assert(run);
-      const seats=metadata.enrich(info.selected.map(id=>({id,available:true})),metaStores.get(wc.id),gradeStores.get(wc.id));
-      if(!rankGroups(seats,run.preferences).some(g=>g.seats.length===info.selected.length&&g.seats.every(s=>info.selected.includes(s.id))))throw Error('선택된 좌석이 현재 매수·연석·구역·열 조건을 만족하는지 확인하지 못했습니다.');
-      if(!wc.isDemo())return runHttpBooking(wc,run,{seats,resumeSelected:true});
-      const result=await selection.completeSelection({adapter,signal:run.signal,preferences:run.preferences,onStatus:text=>setRunStatus(run,text)});
-      return result.completed?finishPriceSelection(wc,run,result):result;
-    });}
     default: throw new Error('지원하지 않는 동작입니다.');
   }
 }

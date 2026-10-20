@@ -112,13 +112,16 @@ function rankDispersed(seats,p,tiers,options,excludedIds,excludedGroups){
   // groups still expand, so reranking continues beyond a failed result page.
   while(heap.length&&result.length<limit){
     const current=pop();
-    if(!excludedGroups.has(current.group.key))result.push(current.group);
+    if(!excludedGroups.has(current.group.key))result.push(current);
     for(let i=0;i<p.quantity;i++)if(current.indices[i]+1<(i+1<p.quantity?current.indices[i+1]:entries.length)){
       const next=[...current.indices];next[i]++;push(next);
     }
   }
-  result.sort((a,b)=>compareCounts(a.tierCounts,b.tierCounts)||compareScore(batchScore(a.seats),batchScore(b.seats))||a.key.localeCompare(b.key));
-  return result;
+  // A shared higher-priority back-row seat can make the aggregate row/aisle
+  // score equal. Preserve each contributing seat's rank before any ID tie-break
+  // so that lower tiers still prefer their front rows and aisle positions.
+  result.sort((a,b)=>compareCounts(a.tierCounts,b.tierCounts)||compareScore(batchScore(a.group.seats),batchScore(b.group.seats))||a.rankSum-b.rankSum||compareScore(a.indices,b.indices)||a.group.key.localeCompare(b.group.key));
+  return result.map(node=>node.group);
 }
 function rankGroups(seats,input={},options={}) {
   const p=normalizePreferences(input),excludedIds=new Set(options.excludedIds||[]),excludedGroups=new Set(options.excludedGroups||[]),seenKeys=new Set(),result=[];

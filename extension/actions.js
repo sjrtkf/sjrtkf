@@ -366,9 +366,11 @@ return Object.freeze({
     const blocked=notice||[...document.querySelectorAll('[role="dialog"], [aria-modal="true"], [aria-busy="true"]')].some(visible);
     const button=prepared&&buttons.length===1?buttons[0]:null;
     if(button&&!blocked&&(button.disabled||button.getAttribute('aria-disabled')==='true'))status.observedDisabled=true;
-    if(httpRetry&&status.clock.outcome==='not-configured'){timer=setTimeout(tick,250);return;}
-    const firstAt=status.clock.deadlineMono;
-    if(status.clock.outcome==='armed'&&performance.now()<firstAt){timer=setTimeout(tick,Math.min(250,firstAt-performance.now()));return;}
+    const now=performance.now(),firstAt=status.clock.deadlineMono;
+    const configured=Number.isFinite(firstAt),clockValid=configured&&now<=status.clock.validUntilMono;
+    if(configured&&!clockValid)status.clock.outcome='stale';
+    if(httpRetry&&!clockValid){status.reason='유효한 서버 시각 설정을 기다립니다.';timer=setTimeout(tick,250);return;}
+    if(clockValid&&now<firstAt){timer=setTimeout(tick,Math.min(250,firstAt-now));return;}
     if(button&&!blocked&&!button.disabled&&button.getAttribute('aria-disabled')!=='true'&&button.textContent.trim()==='예매하기'&&(status.observedDisabled||allowInitiallyEnabled)){
       // Both triggers acquire this latch synchronously, before dispatching.
       // A delivered DOM click is not evidence of an accepted server request.
@@ -390,12 +392,12 @@ return Object.freeze({
   };
   observer=new MutationObserver(tick);observer.observe(document.body,{subtree:true,childList:true,attributes:true,characterData:true});
   const setClock=config=>{
-    if(done||status.clock.firedAtMono!=null||config?.runId!==runId||config.documentId!==status.documentId||String(config?.goodsCode)!==String(goodsCode))return false;
+    if(done||status.clock.firedAtMono!=null&&status.clock.outcome!=='stale'||config?.runId!==runId||config.documentId!==status.documentId||String(config?.goodsCode)!==String(goodsCode))return false;
     const {deadlineMono,validUntilMono,uncertaintyMs,openAt}=config;
     if(config.source!=='ticket-server'||![deadlineMono,validUntilMono,uncertaintyMs,openAt].every(Number.isFinite)||uncertaintyMs<0||uncertaintyMs>501||validUntilMono<deadlineMono)return false;
-    clearTimeout(clockTimer);status.clock={outcome:'armed',deadlineMono,validUntilMono,uncertaintyMs,openAt};
+    clearTimeout(clockTimer);const clock={outcome:'armed',deadlineMono,validUntilMono,uncertaintyMs,openAt};status.clock=clock;
     const fire=()=>{
-      if(done)return;
+      if(done||status.clock!==clock)return;
       const now=performance.now();
       if(now>validUntilMono){status.clock.outcome='stale';return;}
       const firstAt=deadlineMono;

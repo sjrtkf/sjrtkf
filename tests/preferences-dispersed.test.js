@@ -69,3 +69,19 @@ test('newest duplicate observation wins and cannot contribute the same seat twic
   assert.equal(rankGroups([a,a],dispersed).length,0);
   assert.equal(rankGroups([a,b,{...a,available:false}],dispersed).length,0);
 });
+
+test('compound block priorities combine different maps without replacing a preferred seat with nearer lower-tier seats',()=>{
+  const seats=[
+    seat('first','내야석',50,1,{gradeCode:'1',block:'1',blockKey:'001:1'}),
+    seat('second','내야석',20,1,{gradeCode:'1',block:'1',blockKey:'002:1'}),
+    seat('third','중앙석',1,1,{gradeCode:'10',block:'10',blockKey:'003:10'}),
+    seat('fourth','중앙석',5,2,{gradeCode:'10',block:'10',blockKey:'003:10'}),
+    seat('unlisted','내야석',1,1,{gradeCode:'1',block:'10',blockKey:'001:10'})
+  ];
+  const prefs={quantity:3,requireTogether:false,fallbackAnywhere:false,tiers:[{areas:['1'],blocks:['001:1']},{areas:['1'],blocks:['002:1']},{areas:['10']}]};
+  const groups=rankGroups(seats,prefs);
+  assert.deepEqual(groups[0].seats.map(s=>s.id),['first','second','third']);
+  assert.deepEqual(groups[0].tierCounts,[1,1,1]);
+  assert.ok(groups.every(g=>g.seats.every(s=>s.id!=='unlisted')));
+  assert.equal(rankGroups(seats,{...prefs,requireTogether:true}).length,0);
+});

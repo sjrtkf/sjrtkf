@@ -1,7 +1,7 @@
 'use strict';
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),path=require('node:path');
 const {createRequire}=require('node:module');
-function setup({venueStore,writeError=false,savedLastRun=null,ocr=null,clock=null}={}){
+function setup({savedPreferences=null,writeError=false,savedLastRun=null,ocr=null,clock=null}={}){
   const filename=path.resolve(__dirname,'../src/chrome-main.js'),rawLoad=createRequire(filename),load=n=>n==='node:perf_hooks'&&clock?{performance:{now:clock}}:rawLoad(n),source=fs.readFileSync(filename,'utf8').split('app.whenReady().then')[0];
   const calls=[];
   class Target{
@@ -9,20 +9,19 @@ function setup({venueStore,writeError=false,savedLastRun=null,ocr=null,clock=nul
     async invoke(fn,arg){if(fn?.name==='httpBookingAction'){calls.push({fn,arg,id:this.id});return context.httpInvoke?context.httpInvoke(fn,arg):{stage:'ready',status:'pending',requestCount:6,heldCount:2,confirmed:true,validated:true};}if(fn?.name==='httpBookingNavigate'){calls.push({fn,arg,id:this.id});return context.httpInvoke?context.httpInvoke(fn,arg):arg.checkOnly?{supported:true}:{dispatched:true};}if(context.priceInvoke&&['proceedBooking','bookingProgress','priceState','adultPriceStep'].includes(fn?.name)){calls.push({fn,arg,id:this.id});return context.priceInvoke(fn,arg);}if(fn?.name==='priceState')return {ready:true,quantity:context.api?.runs.current?.preferences.quantity||2};if(fn?.name==='proceedBooking')return {dispatched:true};if(fn?.name==='bookingProgress')return {ready:true};if(fn?.name==='adultPriceStep')return {status:'complete',message:'가격/할인 화면 · 성인 가격 확인'};if(fn?.name==='bookingIdentity')return context.bookingIdentity||{goodsCode:'26005452',placeCode:'25001730',playSeq:'001'};if(fn?.name==='resolveGame')return {goodsCode:'26005452',placeCode:'25001730',playSeq:'001'};calls.push({fn,arg,id:this.id});if(context.invoke)return context.invoke(fn,arg);if(fn==='gateState')return null;if(fn?.name==='scene')return {selected:[],buttons:[],grades:[],hasSeats:false};return {};}
   }
   const electron={app:{isPackaged:false,getAppPath:()=>path.resolve(__dirname,'..'),setPath(){}},powerSaveBlocker:{start:()=>1,isStarted:()=>true,stop(){}},shell:{openExternal:async url=>calls.push({external:url})}};
-  const context={require:n=>n==='electron'?electron:n==='./ocr-client'&&ocr?{OcrClient:class{async warmup(){return {};}async recognize(data,options){calls.push({ocr:true});return ocr(data,options);}close(){}}}:n==='./chrome-target'?{ChromeTarget:Target}:n==='./browser-bridge'?{BrowserBridge:class{}}:n==='./venue-profiles'&&venueStore?{createVenueStore:()=>venueStore}:n==='node:fs'?{...fs,statSync(file){if(savedLastRun&&file.endsWith('last-run.json'))return {size:JSON.stringify(savedLastRun).length};throw Error('fixture');},readFileSync(file){if(savedLastRun&&file.endsWith('last-run.json'))return JSON.stringify(savedLastRun);throw Error('fixture');},mkdirSync(){},readdirSync(){return [];},appendFileSync(file,body){if(writeError)throw Error("fixture write failure");(context.logs??=[]).push({file,body});},writeFileSync(file,body){if(writeError)throw Error('fixture write failure');calls.push({write:file,body});}}:load(n),__dirname:path.dirname(filename),process:{argv:[],pid:0},URL,URLSearchParams,Date,console,setTimeout,clearTimeout};
+  const context={require:n=>n==='electron'?electron:n==='./ocr-client'&&ocr?{OcrClient:class{async warmup(){return {};}async recognize(data,options){calls.push({ocr:true});return ocr(data,options);}close(){}}}:n==='./chrome-target'?{ChromeTarget:Target}:n==='./browser-bridge'?{BrowserBridge:class{}}:n==='node:fs'?{...fs,statSync(file){if(savedLastRun&&file.endsWith('last-run.json'))return {size:JSON.stringify(savedLastRun).length};throw Error('fixture');},readFileSync(file){if(savedPreferences&&file.endsWith('preferences.json'))return JSON.stringify(savedPreferences);if(savedLastRun&&file.endsWith('last-run.json'))return JSON.stringify(savedLastRun);throw Error('fixture');},mkdirSync(){},readdirSync(){return [];},appendFileSync(file,body){if(writeError)throw Error("fixture write failure");(context.logs??=[]).push({file,body});},writeFileSync(file,body){if(writeError)throw Error('fixture write failure');calls.push({write:file,body});}}:load(n),__dirname:path.dirname(filename),process:{argv:[],pid:0},URL,URLSearchParams,Date,console,setTimeout,clearTimeout};
   vm.createContext(context);vm.runInContext(source+`
   bridge={getState:()=>globalThis.bridgeState||{},listTabs:()=>globalThis.bridgeTabs||[],request:async q=>{globalThis.calls.push(q);if(q.action==='tabs.open'&&globalThis.openedTab)return globalThis.openedTab;if(q.action==='network.attach'&&globalThis.attachPromise)await globalThis.attachPromise;if(q.action==='network.snapshot')return globalThis.network;return {};}};
-  globalThis.api={scheduleGateClock,pinListingDocument,rememberListing,setClock:value=>clockInfo=value,runHttpBooking,followNoticeDocument,finishPriceSelection,finishBookingButton,recoverPriceSelection,autoLoop,trackTabs,onDocument,onBrowserEvent,command,selectionAdapter,beginRun,targets,runs,metaStores,scopeVersions,validHome,isEntryPage,seatRefs,ensureNetwork,networkSnapshot,runJs,readEntryPage,acknowledgeNotice,launch,stopRun,finishRun,last:()=>lastRun,warning:()=>diagnosticWarning,revision:()=>revision,
+  globalThis.api={scheduleGateClock,pinListingDocument,rememberListing,setClock:value=>clockInfo=value,runHttpBooking,selectCandidates,rankRunSeats,followNoticeDocument,finishPriceSelection,finishBookingButton,recoverPriceSelection,autoLoop,trackTabs,onDocument,onBrowserEvent,command,selectionAdapter,beginRun,targets,runs,metaStores,scopeVersions,validHome,isEntryPage,ensureNetwork,networkSnapshot,runJs,readEntryPage,acknowledgeNotice,launch,stopRun,finishRun,last:()=>lastRun,warning:()=>diagnosticWarning,revision:()=>revision,preferences:()=>preferences,
     applyGradeDetails,gradeStores,recoverSeatDetails,current,active:()=>active,begin:id=>{active=id;return beginRun(targets.get(id),{},'auto');},setTask:p=>runner.task=p};`,context);
   context.calls=calls;context.network={healthy:true,sequence:0,pending:[],results:[]};
   return {api:context.api,context,calls};
 }
 const gate=(id,extra={})=>({id,url:'https://tickets.interpark.com/gates/ticket/26005452',title:'gate',documentId:'initial-document',...extra});
-test('current-event catalogue hydrates visible blocks in bounded pairs and returns public codes',async()=>{
-  const {api,context}=setup();api.trackTabs([gate(1,{url:'https://tickets.interpark.com/onestop/seat'})]);
-  api.current().readSeats=async()=>({rows:[1,2,3].map(n=>({kind:'seat',id:'s'+n,group:'seat_block_001:'+n,available:true}))});
-  let batches=[];context.invoke=(fn,arg)=>{assert.equal(fn.name,'readDetails');batches.push([...arg.blockKeys]);return {grades:[{code:'B',name:'블루존'}],blocks:arg.blockKeys.map(key=>({blockKey:key,seats:[{seatInfoId:key,rowIdx:0,colIdx:0,rowNo:'1',seatNo:'1',seatGrade:'B',isExposable:true}]}))};};
-  const result=await api.command('catalog');assert.deepEqual(batches,[['001:1','001:2'],['001:3']]);assert.equal(result.blocks.length,3);assert.equal(result.areas[0].code,'B');
+test('removed standalone seat and profile commands cannot read or mutate a booking page',async()=>{
+  const {api,calls}=setup();api.trackTabs([gate(1,{url:'https://tickets.interpark.com/onestop/seat'})]);
+  for(const action of ['scan','seat','catalog','recommend','choose','complete','venueSelect','venueCreate'])await assert.rejects(api.command(action,{}),/지원하지 않는 동작/);
+  assert.equal(calls.length,0);assert.equal(api.runs.current,null);
 });
 test('late metadata hydration joins the observed block once without any seat mutation',async()=>{
   const {api,context,calls}=setup();api.trackTabs([gate(1,{url:'https://tickets.interpark.com/onestop/seat'})]);const run=api.begin(1);run.preferences.selectionMethod='api';
@@ -243,7 +242,7 @@ test('loss on an old parent tab cannot overwrite the active popup result',()=>{
 });
 test('older extension cannot begin the updated seat flow before any browser action',async()=>{
   const {api,context,calls}=setup();api.trackTabs([gate(1)]);context.bridgeState={extensionVersion:'0.9.3'};
-  await assert.rejects(api.command('start',{}),/v0.9.26/);assert.equal(api.runs.current,null);assert.equal(calls.length,0);
+  await assert.rejects(api.command('start',{}),/v0.9.27/);assert.equal(api.runs.current,null);assert.equal(calls.length,0);
 });
 test('Chrome targets: only a child of the running tab is adopted; unrelated tabs do not switch target',()=>{
   const {api}=setup();api.trackTabs([gate(1),gate(7)]);const run=api.begin(1);run.entryActionsStarted=true;
@@ -276,10 +275,6 @@ test('Stop during delayed observer attach cancels preparation before any gate ac
   const {api,context,calls}=setup();api.trackTabs([gate(1)]);let release;context.attachPromise=new Promise(r=>release=r);
   await api.command('start',{});const run=api.runs.current;assert.ok(run);const stopping=api.command('stop');release();await stopping;
   assert.equal(run.signal.aborted,true);assert.equal(api.runs.current,null);assert.ok(!calls.some(c=>c.fn?.name==='gateStatus'||c.fn?.name==='armGate'));
-});
-test('Same URL booking context reset invalidates every previously scanned manual seat reference',async()=>{
-  const {api}=setup();api.trackTabs([gate(1)]);api.seatRefs.set('old',{wcId:1,revision:api.revision(),url:gate(1).url,created:Date.now()});
-  api.onBrowserEvent({type:'metadata-reset',tabId:1,reason:'context'});assert.equal(api.seatRefs.size,0);await assert.rejects(api.command('seat',{key:'old',action:'click'}),/좌석 목록이 만료/);
 });
 test('Losing Chrome debugger observation stops gate watchers and cancels the run',async()=>{
   const {api,calls}=setup();api.trackTabs([gate(1)]);const run=api.begin(1);api.onBrowserEvent({type:'entry',tabId:1,event:{kind:'observer-lost'}});await Promise.resolve();
@@ -315,22 +310,16 @@ test('only an unsupported pageInfo command falls back; timeout, document and par
     else await assert.rejects(api.command('games'),error=>error.message===message);
   }
 });
-test('Venue IPC forwards current unsaved conditions and returns the selected profile with normalized preferences',async()=>{
-  const storeCalls=[],normalized=require('../src/preferences').normalizePreferences;
-  let activeId='legacy',prefs=normalized({});
-  const venueStore={getState:()=>({activeId,profiles:[]}),getPreferences:()=>prefs,
-    select(id,current){storeCalls.push({action:'select',id,current});activeId=id;prefs=normalized({quantity:3,areas:['내야']});return prefs;},
-    create(name,current){storeCalls.push({action:'create',name,current});activeId='custom-fixture';prefs=normalized(current);return prefs;},
-    saveActive(input){storeCalls.push({action:'save',input});prefs=normalized(input);return prefs;}};
-  const {api,calls}=setup({venueStore}),current={quantity:1,areas:['A']};
-  const switched=await api.command('venueSelect',{id:'jamsil',preferences:current});
-  assert.equal(switched.venueProfiles.activeId,'jamsil');assert.equal(switched.preferences.quantity,3);assert.deepEqual(storeCalls[0],{action:'select',id:'jamsil',current});
-  const saved=await api.command('preferences',{quantity:4,areas:['B']});assert.equal(saved.preferences.quantity,4);assert.equal(saved.venueProfiles.activeId,'jamsil');assert.equal(storeCalls[1].action,'save');assert.equal(calls.filter(c=>c.write).length,1);
-  const created=await api.command('venueCreate',{name:'새 구장',preferences:current});assert.equal(created.venueProfiles.activeId,'custom-fixture');assert.equal(created.preferences.quantity,1);assert.equal(storeCalls[2].name,'새 구장');
+test('saved seat preferences load directly and saving writes only the single normalized preferences file',async()=>{
+  const savedPreferences={quantity:3,areas:['내야'],blocks:['101'],tiers:[{name:'앞열',areas:['내야'],maxRow:5}]};
+  const {api,calls}=setup({savedPreferences});
+  assert.equal(api.preferences().quantity,3);assert.deepEqual([...api.preferences().blocks],['101']);assert.equal(api.preferences().tiers[0].maxRow,5);
+  const saved=await api.command('preferences',{quantity:4,areas:['B']});assert.equal(saved.preferences.quantity,4);assert.deepEqual([...saved.preferences.areas],['B']);
+  const writes=calls.filter(c=>c.write);assert.equal(writes.length,1);assert.equal(path.basename(writes[0].write),'preferences.json');assert.equal(JSON.parse(writes[0].body).quantity,4);
 });
-test('Venue settings cannot switch or save while a booking run is active',async()=>{
+test('preferences cannot save while a booking run is active',async()=>{
   const {api}=setup();api.trackTabs([gate(1)]);api.begin(1);
-  for(const action of ['venueSelect','venueCreate','preferences'])await assert.rejects(api.command(action,{}),/진행 중에는/);
+  await assert.rejects(api.command('preferences',{}),/진행 중에는/);
 });
 test('A named popup is adopted only after its real document changes during this preparation',()=>{
   const {api}=setup(),parent=gate(1,{url:'https://nol.yanolja.com/ticket/genre/sports/gangwonfc'}),popup=gate(2,{openerTabId:1});
@@ -901,10 +890,50 @@ test('An unavailable standard price logs its exclusion reasons before returning 
   assert.equal(calls.filter(call=>call.fn?.name==='httpBookingAction').length,1);
 });
 
+const qualificationOnlyReply=(reasons=['PRICE_REQUIRES_QUALIFICATION'])=>({stage:'rejected',status:'blocked',code:'STANDARD_PRICE_UNAVAILABLE',httpStatus:200,requestCount:2,heldCount:0,priceAssessment:{groups:[{seatGrade:'30',seatCount:1,selectedIndex:null,options:[{index:0,priceGrade:'02',priceGradeName:'장애인',eligible:false,reasons}]}]}});
+test('qualification-only prices skip that grade before any hold and preserve the exact assessment in logs',async()=>{
+  const {api,context,calls}=setup();api.trackTabs([gate(1,{url:'https://tickets.interpark.com/onestop/seat'})]);const run=api.begin(1);
+  context.httpInvoke=fn=>fn.name==='httpBookingNavigate'?{supported:true}:qualificationOnlyReply();
+  const result=await api.runHttpBooking(api.current(),run,{seats:[{id:'wheelchair',gradeCode:'30'}]});
+  assert.equal(result.priceUnavailable,true);assert.deepEqual([...result.unavailableGrades],['30']);assert.equal(result.completed,false);
+  const events=context.logs.map(line=>JSON.parse(line.body));assert.equal(events.filter(event=>event.event==='price-selection').length,1);
+  const skipped=events.find(event=>event.event==='seat-price-unavailable');assert.equal(skipped.reason,'qualification-only-prices');assert.equal(skipped.priceAssessment.groups[0].options[0].priceGradeName,'장애인');
+  assert.equal(calls.filter(call=>call.fn?.name==='httpBookingAction').length,1);
+});
+test('a disqualified grade is skipped for the remaining candidates while a different ordinary grade completes',async()=>{
+  const {api,context,calls}=setup();api.trackTabs([gate(1,{url:'https://tickets.interpark.com/onestop/seat'})]);const run=api.begin(1);
+  context.httpInvoke=(fn,arg)=>fn.name==='httpBookingNavigate'?arg.checkOnly?{supported:true}:{dispatched:true}:arg.seats[0].gradeCode==='30'?qualificationOnlyReply():{stage:'ready',status:'pending',requestCount:6,heldCount:2,confirmed:true,validated:true};
+  const result=await api.selectCandidates(api.current(),run,[{seats:[{id:'w1',gradeCode:'30'}]},{seats:[{id:'w2',gradeCode:'30'}]},{seats:[{id:'normal',gradeCode:'1'}]}]);
+  assert.equal(result.completed,true);assert.equal(result.attempted,2);assert.ok(run.priceExcludedGrades.has('30'));
+  const attempts=calls.filter(call=>call.fn?.name==='httpBookingAction');assert.deepEqual(attempts.map(call=>call.arg.seats[0].id),['w1','normal']);
+});
+test('mixed-grade price rejection excludes only the unavailable grade and keeps ranked ordinary seats across maps',async()=>{
+  const {api,context}=setup();api.trackTabs([gate(1,{url:'https://tickets.interpark.com/onestop/seat'})]);const run=api.begin(1),reply=qualificationOnlyReply();
+  reply.priceAssessment.groups.unshift({seatGrade:'1',seatCount:1,selectedIndex:0,options:[{index:0,priceGrade:'01',priceGradeName:'예매가',eligible:true,reasons:[]}]});
+  context.httpInvoke=fn=>fn.name==='httpBookingNavigate'?{supported:true}:reply;
+  const result=await api.runHttpBooking(api.current(),run,{seats:[{id:'first',gradeCode:'1'},{id:'restricted',gradeCode:'30'}]});assert.deepEqual([...result.unavailableGrades],['30']);
+  run.priceExcludedGrades=new Set(result.unavailableGrades);
+  run.preferences=require('../src/preferences').normalizePreferences({quantity:2,requireTogether:false,fallbackAnywhere:false,tiers:[{areas:['1']},{areas:['2']},{areas:['30']}]});
+  const row=(id,gradeCode,block)=>({kind:'seat',id,gradeCode,grade:'구역'+gradeCode,block,row:1,number:1,colIdx:0,segment:block,available:true,obstructed:false,aisle:true});
+  run.currentJob={name:'first-map',tierIndex:0};assert.equal(api.rankRunSeats(run,api.current(),[row('first','1','101')]).length,0);
+  run.currentJob={name:'second-map',tierIndex:2};const ranked=api.rankRunSeats(run,api.current(),[row('restricted','30','102'),row('second','2','103')]);
+  assert.equal(ranked.length,1);assert.deepEqual(ranked[0].seats.map(seat=>seat.id).sort(),['first','second']);assert.deepEqual(ranked[0].tierCounts,[1,1,0]);
+});
+test('unknown or quantity-only prices, existing holds and resumed price steps still stop without another transaction',async()=>{
+  for(const fixture of [{reasons:['PRICE_QUANTITY_LIMIT']},{reasons:['PRICE_REQUIRES_QUALIFICATION','PRICE_RECORD_INVALID']},{reasons:['PRICE_REQUIRES_QUALIFICATION','PRICE_AMOUNT_INVALID']},{heldCount:1},{resumePrice:true},{resumeSelected:true},{missingOptions:true},{mismatchedCount:true},{missingGrade:true},{duplicateGrade:true}]){
+    const {api,context,calls}=setup();api.trackTabs([gate(1,{url:'https://tickets.interpark.com/onestop/seat'})]);const run=api.begin(1),reply=qualificationOnlyReply(fixture.reasons);
+    if(fixture.heldCount)reply.heldCount=fixture.heldCount;if(fixture.missingOptions)reply.priceAssessment.groups[0].options=[];
+    if(fixture.mismatchedCount)reply.priceAssessment.groups[0].seatCount=2;if(fixture.duplicateGrade)reply.priceAssessment.groups.push({...reply.priceAssessment.groups[0]});
+    context.httpInvoke=fn=>fn.name==='httpBookingNavigate'?{supported:true}:reply;
+    await assert.rejects(api.runHttpBooking(api.current(),run,{seats:[{id:'wheelchair',gradeCode:'30'},...(fixture.missingGrade?[{id:'normal',gradeCode:'1'}]:[])],resumePrice:fixture.resumePrice,resumeSelected:fixture.resumeSelected}),/자동 적용할 수 있는 일반 가격이 없습니다/);
+    assert.equal(calls.filter(call=>call.fn?.name==='httpBookingAction').length,1);assert.equal(context.logs.map(line=>JSON.parse(line.body)).some(event=>event.event==='seat-price-unavailable'),false);
+  }
+});
+
 
 test('starting on a countdown gate preserves the supplied schedule and arms conditional HTTP',async()=>{
   const {api,context}=setup();api.trackTabs([gate(1)]);const opening=Date.now()+120000;
-  context.bridgeState={extensionVersion:'0.9.26'};
+  context.bridgeState={extensionVersion:'0.9.27'};
   context.invoke=(fn,arg)=>{
     if(fn?.name==='gateStatus')return {supported:true,goodsCode:'26005452',prepared:true,enabled:false};
     if(fn==='gateState')return null;
@@ -917,7 +946,7 @@ test('starting on a countdown gate preserves the supplied schedule and arms cond
 });
 test('conditional entry refuses an extension without the new HTTP runtime',async()=>{
   const {api,context,calls}=setup();api.trackTabs([gate(1)]);context.bridgeState={extensionVersion:'0.9.18'};
-  await assert.rejects(api.command('start',{entryStrategy:'clock',openAt:Date.now()+10000}),/v0.9.26/);assert.equal(calls.length,0);
+  await assert.rejects(api.command('start',{entryStrategy:'clock',openAt:Date.now()+10000}),/v0.9.27/);assert.equal(calls.length,0);
 });
 
 test('listing start waits through disabled states and follows activation to the seat route exactly once',async()=>{
@@ -1038,11 +1067,12 @@ for(const transition of ['navigate','reload'])test(`listing clock invocation han
   assert.equal(calls.filter(c=>c.fn?.name==='setListingClock').length,1);
 });
 
-test('an expired listing clock can receive a fresh sample after its previous deadline fired',async()=>{
-  const {api,context,calls}=setup(),{performance}=require('node:perf_hooks');api.trackTabs([gate(1,{url:'https://nol.yanolja.com/ticket/genre/sports/postseason'})]);
+for(const listing of [false,true])test(`an expired ${listing?'listing':'gate'} clock can receive a fresh sample after its previous deadline fired`,async()=>{
+  const {api,context,calls}=setup(),{performance}=require('node:perf_hooks');api.trackTabs([listing?gate(1,{url:'https://nol.yanolja.com/ticket/genre/sports/postseason'}):gate(1)]);
   const run=api.begin(1),mono=performance.now(),epoch=Date.now();Object.assign(run,{game:{key:'wanted'},openAt:epoch-1000,clockEligible:true,lastClockRefresh:mono});run.entry.strategy='clock';
   api.setClock({source:'ticket-server',anchorMonoMs:mono,serverEpochAtAnchorMs:epoch,rttMs:10,uncertaintyMs:6});
-  context.invoke=fn=>fn==='pageClock'?{pageMono:performance.now(),documentId:'listing-clock'}:fn?.name==='setListingClock';
-  await api.scheduleGateClock(run,api.current(),{phase:'armed',documentId:'listing-clock',clock:{outcome:'stale',firedAtMono:1}},{listing:true});
-  assert.equal(calls.filter(c=>c.fn?.name==='setListingClock').length,1);
+  const action=listing?'setListingClock':'setGateClock';
+  context.invoke=fn=>fn==='pageClock'?{pageMono:performance.now(),documentId:'listing-clock'}:fn?.name===action;
+  await api.scheduleGateClock(run,api.current(),{phase:'armed',documentId:'listing-clock',clock:{outcome:'stale',firedAtMono:1}},{listing});
+  assert.equal(calls.filter(c=>c.fn?.name===action).length,1);
 });

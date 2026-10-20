@@ -14,6 +14,12 @@ test('A new search round discards pooled observations and expired metadata jobs'
   const run=state(),job={name:'A',tierIndex:0};run.currentJob=job;search.rememberMap(run,[seat('1','A')]);run.jobVisits.set(search.jobKey(job),10);run.metadataCooldown.set(search.jobKey(job),20);
   search.resetSearch(run);assert.equal(run.jobVisits.size,0);assert.equal(run.metadataCooldown.size,0);assert.deepEqual(search.pooledSeats(run),[]);
 });
+
+test('Price-ineligible grades are reconsidered on the next search round',()=>{
+  const run=state();run.priceExcludedGrades=new Set(['30']);
+  search.resetSearch(run);assert.equal(run.priceExcludedGrades.size,0);
+  assert.ok(run.priceExcludedGrades instanceof Set);
+});
 test('Metadata wakeups do not override same-tier fresh jobs, and expired repeats use oldest visit order',()=>{
   const run=state(),plan=[{name:'A',tierIndex:0},{name:'B',tierIndex:0},{name:'C',tierIndex:1}];
   run.jobVisits.set(search.jobKey(plan[0]),10);run.metadataCooldown.set(search.jobKey(plan[0]),0);

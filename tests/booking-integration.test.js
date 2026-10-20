@@ -182,16 +182,15 @@ async function bookingFixture(options={}){
   const filename=path.resolve(__dirname,'../src/chrome-main.js'),load=createRequire(filename);
   const source=fs.readFileSync(filename,'utf8').split('app.whenReady().then')[0];
   const noFile=()=>{const error=Error('No persisted fixture settings');error.code='ENOENT';throw error;};
-  const io={...fs,statSync:noFile,readFileSync:noFile,mkdirSync(){},readdirSync:()=>[],appendFileSync(_file,text){logs.push(...text.trim().split('\n').filter(Boolean).map(JSON.parse));},writeFileSync(){}};
+  const io={...fs,statSync:noFile,readFileSync:noFile,mkdirSync(){},readdirSync:()=>[],appendFileSync(_file,text){const events=text.trim().split('\n').filter(Boolean).map(JSON.parse);logs.push(...events);for(const event of events)options.afterLog?.(event,f);},writeFileSync(){}};
   const preferences={quantity:2,areas:['중앙석'],blocks:['101'],requireTogether:true,excludeObstructed:true,autoComplete:true,autoCaptcha:false,manualCaptchaAssist:false,...options.preferences};
   const electron={app:{isPackaged:false,getAppPath:()=>path.resolve(__dirname,'..'),setPath(){}},powerSaveBlocker:{start:()=>1,isStarted:()=>true,stop(){}},net:{fetch(){throw Error('Live network forbidden');}}};
-  const main={require:name=>name==='electron'?electron:name==='node:fs'?io:name==='./browser-bridge'?{BrowserBridge:class{}}:name==='./venue-profiles'?{createVenueStore:()=>({getPreferences:()=>preferences,getState:()=>({profiles:[]})})}:load(name),__dirname:path.dirname(filename),process:{argv:[],pid:0},URL,URLSearchParams,Date,console,setTimeout,clearTimeout,fixtureBridge:bridge,fixturePreferences:preferences};
+  const main={require:name=>name==='electron'?electron:name==='node:fs'?io:name==='./browser-bridge'?{BrowserBridge:class{}}:load(name),__dirname:path.dirname(filename),process:{argv:[],pid:0},URL,URLSearchParams,Date,console,setTimeout,clearTimeout,fixtureBridge:bridge,fixturePreferences:preferences};
   vm.createContext(main);vm.runInContext(source+`
     bridge=fixtureBridge;globalThis.api={autoLoop,launch,stopRun,trackTabs,onBrowserEvent,current,ensureNetwork,runs,command,
       begin:()=>beginRun(current(),fixturePreferences,'auto')};`,main);
   api=main.api;api.trackTabs([{...tab}]);
   f.start=async()=>{const run=api.begin();await api.ensureNetwork(api.current());const task=api.launch(run,()=>api.autoLoop(run));task.catch(()=>{});return {run,task};};
-  f.complete=overrides=>api.command('complete',{preferences:{...preferences,...overrides}});
   f.stop=()=>{stopPromise=api.stopRun('통합 검증 중지');return stopPromise;};
   f.mutations=()=>calls.filter(c=>c.body?.query?.startsWith('mutation'));
   f.destination=async()=>options.electron?(await f.browserState()).routes:routes;
@@ -247,9 +246,12 @@ scenario('a seat conflict releases the acknowledged hold before the main loop tr
   }finally{await f.close();}
 });
 
-scenario('a price list containing only membership pricing stops the real flow before a hold or navigation',async engine=>{
-  const f=await bookingFixture({...engine,price:{isMembership:true}});try{
-    const {task}=await f.start();await assert.rejects(task,/STANDARD_PRICE_UNAVAILABLE/);
+scenario('a price list containing only membership pricing waits for seat changes without holding or retrying the same grade',async engine=>{
+  let waits=0;const f=await bookingFixture({...engine,price:{isMembership:true},afterLog(event,fixture){
+    if(event.event==='stage'&&event.message.includes('좌석 데이터 변경 대기')&&++waits===1)void fixture.stop();
+  }});try{
+    const {run,task}=await f.start();await assert.rejects(task,/중지/);await f.stopPromise;
+    assert.equal(waits,1);assert.ok(run.priceExcludedGrades.has('1'));assert.equal(f.begins.length,1);
     assert.equal(f.mutations().length,0);assert.deepEqual(await f.destination(),[]);assert.equal((await f.pageContext()).seats,undefined);
     const evidence=f.logs.filter(event=>event.event==='price-selection');assert.equal(evidence.length,1);
     const group=evidence[0].priceAssessment.groups[0];assert.equal(group.selectedIndex,null);assert.equal(group.seatCount,2);
@@ -387,14 +389,17 @@ scenario('ordinary prices from two grades keep independent price records and the
   }finally{await f.close();}
 });
 
-scenario('one selected grade without an eligible ordinary price blocks the whole multi-grade group before any hold',async engine=>{
+scenario('a qualification-only grade is replaced while preserving the higher-priority ordinary seat in a split group',async engine=>{
   const f=await bookingFixture({...engine,maps:[
     {name:'A석',code:'1',block:'101',count:1,priceList:[{priceGradeName:'일반',discountName:''}]},
     {name:'B석',code:'2',block:'102',count:1,priceList:[{priceGradeName:'청소년',discountName:''}]},
-  ],preferences:{quantity:2,areas:[],blocks:[],tiers:[{areas:['A석']},{areas:['B석']}],fallbackAnywhere:false,requireTogether:false}});try{
-    const {task}=await f.start();await assert.rejects(task,/STANDARD_PRICE_UNAVAILABLE/);
-    assert.equal(f.mutations().length,0);assert.equal(f.calls.filter(c=>c.path==='/onestop/api/seats/select').length,0);
-    assert.equal((await f.pageContext()).seats,undefined);assert.deepEqual(await f.destination(),[]);
+    {name:'C석',code:'3',block:'103',count:2,priceList:[{priceGradeName:'일반',discountName:''}]},
+  ],preferences:{quantity:2,areas:[],blocks:[],tiers:[{areas:['A석']},{areas:['B석']},{areas:['C석']}],fallbackAnywhere:false,requireTogether:false}});try{
+    const {run,task}=await f.start();assert.equal((await task).completed,true);
+    assert.ok(run.priceExcludedGrades.has('2'));assert.equal(f.begins.length,2);assert.equal(f.mutations().length,2);
+    assert.deepEqual((await f.pageContext()).seats.map(seat=>seat.seatGrade),['1','3']);
+    assert.ok(f.mutations().every(call=>!f.maps[1].records.some(seat=>seat.seatInfoId===call.body.variables.command.seatInfoId)));
+    assert.deepEqual(await f.destination(),['/payment']);
   }finally{await f.close();}
 });
 
@@ -408,14 +413,11 @@ scenario('an existing price page resumes ordinary pricing and validation without
   }finally{await f.close();}
 });
 
-scenario('explicit completion of a seat-only run prices the selected DOM seats without repeating a hold',async engine=>{
+scenario('a seat-only automatic run finishes after the requested holds without applying prices or navigating',async engine=>{
   const f=await bookingFixture({...engine,preferences:{autoComplete:false},price:{priceGrade:'REGULAR',priceGradeName:'일반',discountName:''}});try{
     const {task}=await f.start();const selected=await task;assert.equal(selected.completed,false);assert.equal(selected.selectedIds.length,2);
     assert.equal(f.mutations().length,2);assert.equal(f.calls.filter(c=>c.path.includes('/api/prices/')).length,0);assert.deepEqual(await f.destination(),[]);
-    const result=await f.complete({autoComplete:true});assert.equal(result.completed,true);
-    assert.equal(f.begins.length,2);assert.equal(f.begins[1].resumeSelected,true);assert.equal(f.mutations().length,2);
-    assert.equal(f.calls.filter(c=>c.path==='/onestop/api/seats/select').length,1);assert.equal((await f.pageContext()).prices[0].pgPrice.priceGrade,'REGULAR');
-    assert.deepEqual(await f.destination(),['/payment']);
+    assert.equal(f.begins.length,1);assert.equal(f.calls.filter(c=>c.path==='/onestop/api/seats/select').length,0);
   }finally{await f.close();}
 });
 

@@ -1,8 +1,7 @@
 'use strict';
 const $=id=>document.getElementById(id);
-let seats=[],gameRows=[],prefInitialized=false,running=false,localBusy=0,currentTargetUrl='',currentTargetId=null,lastRunId=null,currentEntry=null,browserConnected=null,pageUrlInitialized=false;
-let activeStep='connect',savedPrefsSnapshot=null,latestPageInfo=null,pairingExpiryTimer=null,venueProfiles=null;
-let currentCatalog=null;
+let gameRows=[],prefInitialized=false,running=false,localBusy=0,currentTargetUrl='',currentTargetId=null,lastRunId=null,currentEntry=null,browserConnected=null,pageUrlInitialized=false;
+let activeStep='connect',savedPrefsSnapshot=null,latestPageInfo=null,pairingExpiryTimer=null;
 let preflightFingerprint=null,lastPreflightState='',lastRunRecord=null;
 let captchaState={available:false,ready:false,busy:false,message:'인식 프로그램 준비 상태를 확인하고 있습니다.',text:'',confidence:null,mode:null},captchaPending=false;
 let manualCaptchaState={present:false,supported:false,status:'idle',challengeId:null,imageDataUrl:null,existingText:'',message:'이미지 보기·입력 준비를 눌러 주세요.',targetId:null,busy:false},manualCaptchaPending=false,manualCaptchaShownKey=null,manualCaptchaSubmittedKey=null;
@@ -14,8 +13,8 @@ const safeManualCaptchaImage=value=>typeof value==='string'&&value.length<=3*102
 const manualCaptchaKey=()=>manualCaptchaState.present&&manualCaptchaState.supported&&manualCaptchaState.challengeId&&String(manualCaptchaState.targetId)===String(currentTargetId)?String(manualCaptchaState.targetId)+':'+manualCaptchaState.challengeId:null;
 const targetIsGate=()=>/^https:\/\/tickets\.interpark\.com\/gates\/ticket\/\d+(?:[/?#]|$)/.test(currentTargetUrl);
 const targetIsSeat=()=>{try{const url=new URL(currentTargetUrl);return url.origin==='https://tickets.interpark.com'&&url.pathname==='/onestop/seat';}catch{return false;}};
-const lockedIds=['home','postseason','testBears','pageUrl','demo','target','games','game','openAt','restoreOpening','clock','entryStrategy','entryOffsetMs','inspectionOnly','stopAfterCaptcha','includeRestricted','fallbackAnywhere','recordObservation','preflight','start','save','quantity','quantityMinus','quantityPlus','priority','areas','blocks','together','obstructed','autoComplete','autoCaptcha','manualCaptchaAssist','notice','readAreas','addArea','areaChoice','recommend','choose','complete','scan','minus','reset','plus','addTier','refreshPairing','updateExtension','extensionFolder','venueProfile','venueName','createVenue','referenceArea','referenceTarget','addReferenceAreas','catalogTarget','blockChoice','addBlock'];
-const browserIds=['recordObservation','home','postseason','testBears','demo','target','games','game','start','readAreas','recommend','choose','complete','scan','minus','reset','plus','focus','code','submitCode'];
+const lockedIds=['home','postseason','testBears','pageUrl','demo','target','games','game','openAt','restoreOpening','clock','entryStrategy','entryOffsetMs','inspectionOnly','stopAfterCaptcha','includeRestricted','fallbackAnywhere','recordObservation','preflight','start','save','quantity','quantityMinus','quantityPlus','priority','areas','blocks','together','obstructed','autoComplete','autoCaptcha','manualCaptchaAssist','notice','minus','reset','plus','addTier','refreshPairing','updateExtension','extensionFolder'];
+const browserIds=['recordObservation','home','postseason','testBears','demo','target','games','game','start','minus','reset','plus','focus','code','submitCode'];
 const tierValue=(node,name)=>node.querySelector('[data-field="'+name+'"]');
 function showStep(step,{focus=false}={}){
   if(!stepOrder.includes(step))return;
@@ -32,11 +31,9 @@ function updateOverview(){
   $('runMode').disabled=running||localBusy>0||captchaBusy()||manualCaptchaBusy();
   $('nextCard').hidden=running||activeStep==='run';
   if(preflightFingerprint!==null&&preflightFingerprint!==currentPreflightFingerprint())displayPreflight(null,{stale:true});
-  const profile=venueProfiles?.profiles?.find(item=>item.id===venueProfiles.activeId);
-  $('runVenueSummary').textContent=profile?.name||'기존 공통 설정';
   $('runModeSummary').textContent=inspectionOnly?'진입 확인만 · 좌석 선택 없이 정지':p.stopAfterCaptcha?'보안문자 확인 후 기록·정지':'자동 진행 · 좌석 조건 적용';
   const scopeStart=targetIsSeat()?'현재 좌석 화면':'예매창 진입';
-  $('runScope').textContent=inspectionOnly?scopeStart+' → 정지. 좌석 선택과 선택 완료는 실행하지 않습니다.':p.stopAfterCaptcha?scopeStart+' → 보안문자 확인 → 정보 기록 → 정지.':p.autoComplete?scopeStart+' → 좌석 조건 확인·선택 → 일반 가격 수량 선택 → N매 예매하기 → 다음 화면 확인. 결제는 직접 진행합니다.':scopeStart+' → 좌석 조건 확인·선택 → 정지. ‘선택 완료’가 꺼져 있어 다음 화면으로 자동 이동하지 않습니다.';
+  $('runScope').textContent=inspectionOnly?scopeStart+' → 정지. 좌석 선택과 선택 완료는 실행하지 않습니다.':p.stopAfterCaptcha?scopeStart+' → 보안문자 확인 → 정보 기록 → 정지.':p.autoComplete?scopeStart+' → 좌석 조건 확인·선택 → 일반 가격 수량 선택 → N매 예매하기 → 다음 화면 확인. 결제는 직접 진행합니다.':scopeStart+' → 좌석 조건 확인·선택 → 정지. ‘좌석 선택까지만’ 범위이므로 다음 화면으로 자동 이동하지 않습니다.';
   $('runScope').dataset.level=inspectionOnly||p.stopAfterCaptcha||!p.autoComplete?'warning':'ok';
   const quantity=Number.isInteger(p.quantity)&&p.quantity>=1&&p.quantity<=4?p.quantity+'석':'좌석 수 확인 필요';
   const seatSummary=[quantity,p.requireTogether?'연석 필수':'떨어진 좌석도 허용',p.excludeObstructed?'시야방해석 제외':'시야방해석 허용',p.excludeRestricted?'장애인·휠체어석 제외':'장애인·휠체어석 포함'].join(' · ');
@@ -53,8 +50,7 @@ function updateOverview(){
   for(const id of ['seatSummary','runSeatSummary'])$(id).textContent=seatSummary;
   for(const id of ['conditionSummary','runConditionSummary'])$(id).textContent=conditionSummary;
   $('saveBadge').textContent=dirty?'변경됨 · 미저장':'저장됨';$('saveBadge').classList.toggle('unsaved',dirty);$('dirtyBadge').hidden=!dirty;
-  const profileName=profile?.name||'현재 구장';
-  $('saveHint').textContent=dirty?'변경한 조건은 이번 실행에 바로 적용됩니다. ‘'+profileName+'’에 저장하면 다음에도 불러올 수 있습니다.':'‘'+profileName+'’에 저장된 조건입니다. 구장을 바꾸어도 따로 보존됩니다.';
+  $('saveHint').textContent=dirty?'변경한 조건은 이번 실행에 바로 적용됩니다. 저장하면 다음 실행에도 사용합니다.':'저장한 좌석 조건을 다음 실행에서도 사용합니다.';
   $('quantityMinus').disabled=running||localBusy>0||captchaBusy()||manualCaptchaBusy()||p.quantity<=1;
   $('quantityPlus').disabled=running||localBusy>0||captchaBusy()||manualCaptchaBusy()||p.quantity>=4;
   const selected=Boolean($('game').value)||targetIsGate()||targetIsSeat();
@@ -82,26 +78,6 @@ function updateOverview(){
   $('nextLabel').textContent=running?'현재 진행':'지금 할 일';$('nextTitle').textContent=next[0];$('nextHint').textContent=next[1];$('nextAction').textContent=next[2];$('nextAction').dataset.go=next[3];
   $('start').textContent=running?(inspectionOnly?'진입 확인 중':'자동 진행 중'):localBusy||captchaBusy()?'처리 중…':activeStep==='captcha'?'자동 예매는 시작 탭에서':browserConnected!==true?'Chrome 연결 후 시작':!selected?'경기 선택 후 시작':inspectionOnly?(targetIsSeat()?'현재 좌석 화면만 확인':'진입 확인만 시작'):targetIsSeat()?'현재 좌석 화면에서 시작':'자동 진행 시작';$('runDot').classList.toggle('running',running||captchaBusy());
   $('targetHint').textContent=targetIsSeat()?'이미 열린 좌석 화면입니다. 경기 목록을 읽지 않아도 시작 탭에서 직접 시작할 수 있습니다. 연결만으로 자동 진행하지 않습니다.':targetIsGate()?'열린 준비 화면을 그대로 사용합니다. 아래 경기 선택은 필요하지 않습니다.':currentTargetUrl?'이 탭에만 설정과 예매 보조를 적용합니다.':'예매 페이지를 열면 탭 목록에 표시됩니다.';
-}
-function showVenueProfiles(value,{applyPreferences=false}={}){
-  if(!value||!Array.isArray(value.profiles))return;
-  const changed=venueProfiles?.activeId!==value.activeId;
-  venueProfiles=value;
-  const profile=value.profiles.find(item=>item.id===value.activeId);
-  $('venueProfile').replaceChildren();
-  for(const item of value.profiles)$('venueProfile').append(new Option(item.name,item.id));
-  $('venueProfile').value=value.activeId;
-  $('venueDescription').textContent=profile?.description||'';
-  $('venueWarning').hidden=!value.warning;$('venueWarning').textContent=value.warning||'';
-  $('venueReference').hidden=!profile?.reference;
-  if(profile?.reference){
-    $('venueReferenceSource').textContent=profile.reference.source;
-    $('venueReferenceNote').textContent=profile.reference.note;
-    const selected=new Set([...$('referenceArea').selectedOptions].map(option=>option.value));
-    $('referenceArea').replaceChildren();for(const name of profile.reference.areas){const option=new Option(name,name);option.selected=selected.has(name);$('referenceArea').append(option);}
-  }
-  if(profile&&(changed||applyPreferences)){showPrefs(profile.preferences);prefInitialized=true;}
-  updateOverview();
 }
 function showPageInfo(info,count=0){
   latestPageInfo=info||null;$('pageReadout').hidden=!info;
@@ -149,17 +125,7 @@ function lockControls(){
   for(const id of ['areas','blocks','priority'])$(id).disabled=busy||enabledTiers>0;
   $('legacyPrefs').classList.toggle('legacy-off',enabledTiers>0);
   $('tierMode').textContent=enabledTiers?'사용한 조건 묶음을 위에서부터 적용합니다. 같은 묶음 안에서는 기본 선호 순서로 고릅니다.':'조건 묶음을 사용하지 않으면 아래의 기본 우선 구역·블록부터 찾습니다.';
-  for(const button of $('seats').querySelectorAll('button'))button.disabled=busy||browserConnected===false;
   for(const button of $('seatingGuides').querySelectorAll('button'))button.disabled=busy;
-  const previousReferenceTarget=$('referenceTarget').value;
-  $('referenceTarget').replaceChildren();
-  if(!enabledTiers)$('referenceTarget').append(new Option('기본 구역 목록','base'));
-  [...$('tiers').children].forEach((node,index)=>{if(tierValue(node,'enabled').checked)$('referenceTarget').append(new Option((index+1)+'순위 · '+tierValue(node,'name').value,String(index)));});
-  if([...$('referenceTarget').options].some(option=>option.value===previousReferenceTarget))$('referenceTarget').value=previousReferenceTarget;
-  const oldTarget=$('catalogTarget').value;$('catalogTarget').replaceChildren();
-  if(!enabledTiers)$('catalogTarget').append(new Option('기본 구역·블록 목록','base'));
-  [...$('tiers').children].forEach((node,index)=>{if(tierValue(node,'enabled').checked)$('catalogTarget').append(new Option((index+1)+'순위 · '+tierValue(node,'name').value,String(index)));});
-  if([...$('catalogTarget').options].some(o=>o.value===oldTarget))$('catalogTarget').value=oldTarget;
   updateOverview();
 }
 function addTier(tier={},enabled=false){
@@ -355,23 +321,6 @@ async function submitManualCaptcha(){
   try{const result=await run('manualCaptchaSubmit',{challengeId:manualCaptchaState.challengeId,text});if(!result)manualCaptchaMessage($('status').textContent,true);}
   finally{manualCaptchaPending=false;showManualCaptchaMode();lockControls();}
 }
-function clear(){seats=[];render();$('summary').textContent='좌석 화면을 다시 확인해 주세요.';}
-function render(){
-  $('seats').replaceChildren();const q=$('filter').value.trim().toLowerCase();
-  const matching=seats.filter(s=>s.label.toLowerCase().includes(q));
-  if(!matching.length){const div=document.createElement('div');div.className='empty';div.textContent=seats.length?'검색 결과가 없습니다.':'확인된 좌석이 없습니다.';$('seats').append(div);return;}
-  // Rendering is bounded; matching and recommendation continue to use the full pool.
-  if(matching.length>400){const note=document.createElement('div');note.className='empty';note.textContent=matching.length+'개 중 400개 표시 · 검색과 자동 추천은 전체 대상';$('seats').append(note);}
-  for(const s of matching.slice(0,400)){
-    const div=document.createElement('div');div.className='seat';const label=document.createElement('span');label.textContent=s.label;div.append(label);
-    for(const [action,text] of [['focus','위치'],['click',s.kind==='grade'?'열기':'선택']]){
-      const button=document.createElement('button');button.textContent=text;button.setAttribute('aria-label',s.label+' '+text);
-      button.onclick=async()=>{const result=await exclusive('seat',{key:s.key,action});if(action==='click'||!result)clear();};div.append(button);
-    }
-    $('seats').append(div);
-  }
-  lockControls();
-}
 for(const [id,action,payload] of [['demo','demo'],['minus','zoom',-.1],['reset','zoom',0],['plus','zoom',.1]])$(id).onclick=()=>exclusive(action,payload);
 for(const step of stepOrder){
   $('tab-'+step).onclick=()=>showStep(step);
@@ -404,9 +353,6 @@ $('manualCaptchaText').oninput=()=>{const input=$('manualCaptchaText'),start=inp
 $('manualCaptchaText').onkeydown=e=>{if(e.key==='Enter'&&!e.isComposing&&!e.repeat){e.preventDefault();return submitManualCaptcha();}};
 $('manualCaptchaAssist').onchange=()=>{lockControls();updateOverview();};
 $('autoCaptcha').onchange=()=>{lockControls();updateOverview();};
-$('filter').oninput=render;
-$('scan').onclick=async()=>{const result=await exclusive('scan');if(result){seats=result.seats;$('summary').textContent=result.message;render();}else clear();};
-let lastRevision=-1;
 window.helper.onState(state=>{
   if(typeof state.appVersion==='string'&&/^\d+\.\d+\.\d+$/.test(state.appVersion)){
     document.title='야구 티켓팅 도우미 v'+state.appVersion;
@@ -419,21 +365,18 @@ window.helper.onState(state=>{
   $('quickStop').hidden=true;
   showBrowserStatus(state.browserStatus);
   if(!pageUrlInitialized&&state.pageUrl){$('pageUrl').value=state.pageUrl;pageUrlInitialized=true;}
-  if(state.revision!==lastRevision){lastRevision=state.revision;clear();currentCatalog=null;renderCatalog();}
   const windows=state.windows||[];
   for(const id of ['target','captchaTarget']){$(id).replaceChildren();for(const w of windows)$(id).append(new Option(w.title,w.id));if(!windows.length)$(id).append(new Option('연결된 예매 탭 없음',''));}
   const nextTargetUrl=windows.find(w=>String(w.id)===String(state.target))?.url||'';
   const manualTargetChanged=nextTargetUrl!==currentTargetUrl||String(state.target)!==String(currentTargetId)||state.browserStatus?.connected===false;
   if(manualTargetChanged)showManualCaptcha({present:false,supported:false,message:'대상 탭이 바뀌었습니다. 입력 준비를 다시 눌러 주세요.'});
   if(currentTargetUrl&&(nextTargetUrl!==currentTargetUrl||String(state.target)!==String(currentTargetId))&&!running){gameRows=[];$('game').replaceChildren(new Option('목록을 읽고 경기를 선택하세요',''));$('official').textContent='경기를 선택하면 확인합니다.';$('openAt').value='';showPageInfo(null);$('gameHint').textContent='탭이 바뀌었습니다. 경기 목록을 다시 읽어 주세요.';}
-  if(manualTargetChanged){currentCatalog=null;renderCatalog();}
   currentTargetUrl=nextTargetUrl;currentTargetId=state.target;
   if(targetIsSeat()){$('official').textContent='이미 좌석 화면에 진입했습니다. 오픈 시각 예약은 사용하지 않습니다.';$('gameHint').textContent='현재 좌석 화면을 사용하므로 경기 목록 선택은 필요하지 않습니다.';}
   $('captchaTarget').value=state.target;showCaptchaStatus(state.captchaStatus);
   if(state.browserStatus?.connected!==false&&state.manualCaptcha)showManualCaptcha(state.manualCaptcha);
   showEntryMode();
   $('target').value=state.target;if(!prefInitialized&&state.preferences){showPrefs(state.preferences);prefInitialized=true;}
-  showVenueProfiles(state.venueProfiles);
   $('runStatus').textContent=state.running?'자동 진행 중':'자동 진행 대기';
   if(running&&currentEntry?.strategy==='clock')$('runStatus').textContent+=' · 시각 예약: '+clockOutcomeLabel(currentEntry.clockOutcome)+(currentEntry.clockReason?' · '+currentEntry.clockReason:'');
   showClock(state.clockInfo);
@@ -442,26 +385,7 @@ window.helper.onState(state=>{
   showRunDiagnostics(running?state.runDiagnostics:lastRunRecord,{live:running});
   lockControls();
 });
-$('save').onclick=async()=>{const r=await exclusive('preferences',readPrefs());if(r){if(r.venueProfiles)showVenueProfiles(r.venueProfiles);showPrefs(r.preferences);}};
-$('venueProfile').onchange=async()=>{
-  const id=$('venueProfile').value,r=await exclusive('venueSelect',{id,preferences:readPrefs()});
-  if(r?.venueProfiles)showVenueProfiles(r.venueProfiles,{applyPreferences:true});
-  else if(venueProfiles)$('venueProfile').value=venueProfiles.activeId;
-};
-$('createVenue').onclick=async()=>{
-  const name=$('venueName').value.trim();if(!name){message('새 구장 설정의 이름을 입력해 주세요.');$('venueName').focus();return;}
-  const r=await exclusive('venueCreate',{name,preferences:readPrefs()});
-  if(r?.venueProfiles){$('venueName').value='';showVenueProfiles(r.venueProfiles,{applyPreferences:true});}
-};
-$('addReferenceAreas').onclick=()=>{
-  const names=[...$('referenceArea').selectedOptions].map(option=>option.value);
-  if(!names.length){message('참고 목록에서 추가할 구역을 선택해 주세요.');return;}
-  const target=$('referenceTarget').value==='base'?$('areas'):tierValue($('tiers').children[Number($('referenceTarget').value)],'areas');
-  if(!target)return;
-  const separator=target===$('areas')?'\n':', ';
-  target.value=[...new Set([...target.value.split(/[\n,]/).map(value=>value.trim()).filter(Boolean),...names])].join(separator);
-  updateOverview();message('선택한 과거 구역명을 추가했습니다. 현재 경기의 이름·판매 단위를 확인한 뒤 저장하세요.');
-};
+$('save').onclick=async()=>{const result=await exclusive('preferences',readPrefs());if(result?.preferences)showPrefs(result.preferences);};
 $('addTier').onclick=()=>addTier({},true);
 $('games').onclick=async()=>{const r=await exclusive('games');if(!r)return;gameRows=r.games||[];$('game').replaceChildren(new Option(gameRows.length?'대상 경기 선택':'읽어 온 경기 없음',''));for(const g of gameRows)$('game').append(new Option(g.label,g.key));$('game').onchange();showPageInfo(r.pageInfo,gameRows.length);if(!r.pageInfo)$('gameHint').textContent=gameRows.length?gameRows.length+'개 경기 중 대상을 선택하세요.':'읽어 온 경기가 없습니다. 사이트의 현재 판매 상태를 확인하세요.';};
 function showOpening(g,{fill=true}={}){
@@ -489,38 +413,5 @@ $('stop').onclick=()=>run('stop');
 $('quickStop').onclick=()=>run('stop');
 $('submitCode').onclick=async()=>{const code=$('securityCode').value;$('securityCode').value='';await run('code',code);};
 $('securityCode').onkeydown=e=>{if(e.key==='Enter')$('submitCode').click();};
-$('readAreas').onclick=async()=>{const r=await exclusive('catalog');if(!r)return;currentCatalog=r;renderCatalog();};
-$('areaChoice').onchange=renderCatalogBlocks;
-$('blockChoice').onchange=renderCatalogSeats;
-$('addArea').onclick=()=>addCatalogChoices(false);
-$('addBlock').onclick=()=>addCatalogChoices(true);
-$('recommend').onclick=async()=>{const r=await exclusive('recommend',{preferences:readPrefs()});if(r){seats=r.groups.length?r.groups[0].seats:r.seats;$('summary').textContent=r.message;render();}};
-$('choose').onclick=()=>exclusive('choose',{preferences:readPrefs()});
-$('complete').onclick=()=>exclusive('complete',{preferences:readPrefs()});
 run('state');
 run('pairingInfo').then(showPairing);
-
-function renderCatalog(){
-  $('areaChoice').replaceChildren();
-  for(const a of currentCatalog?.areas||[])$('areaChoice').append(new Option(a.name+(a.code?' · 코드 '+a.code:' · 코드 미수신'),a.name));
-  $('catalogHint').textContent=currentCatalog?currentCatalog.title+' · '+currentCatalog.message:'현재 경기의 좌석 화면에서 목록을 읽어 주세요. 목록은 조건에 추가할 때만 적용됩니다.';
-  renderCatalogBlocks();
-}
-function renderCatalogBlocks(){
-  const names=new Set([...$('areaChoice').selectedOptions].map(o=>o.value));$('blockChoice').replaceChildren();
-  for(const b of currentCatalog?.blocks||[])if(!names.size||b.areas.some(n=>names.has(n)))$('blockChoice').append(new Option(b.areas.join(' / ')+' · '+b.name+' · 코드 '+b.code,b.code));
-  renderCatalogSeats();
-}
-function renderCatalogSeats(){
-  const blocks=new Set([...$('blockChoice').selectedOptions].map(o=>o.value)),areas=new Set([...$('areaChoice').selectedOptions].map(o=>o.value));
-  const rows=(currentCatalog?.seats||[]).filter(s=>(!blocks.size||blocks.has(s.block))&&(!areas.size||areas.has(s.area)));
-  $('catalogSeats').replaceChildren();$('catalogSeatCount').textContent=rows.length+'개 중 최대 200개 표시 · 선택 가능 여부는 실행 시 다시 확인합니다.';
-  for(const s of rows.slice(0,200)){const tr=document.createElement('tr');for(const value of [s.area+' / '+s.block,String(s.row??'?')+' · '+String(s.number??'?')+'번',s.id]){const td=document.createElement('td');td.textContent=value;tr.append(td);}$('catalogSeats').append(tr);}
-}
-function addCatalogChoices(withBlocks){
-  const chosenAreas=[...$('areaChoice').selectedOptions].map(o=>o.value),chosenBlocks=[...$('blockChoice').selectedOptions].map(o=>o.value);
-  if(withBlocks)for(const b of currentCatalog?.blocks||[])if(chosenBlocks.includes(b.code))chosenAreas.push(...b.areas);
-  const target=$('catalogTarget').value,node=target==='base'?null:$('tiers').children[Number(target)];
-  const add=(field,values)=>{const control=node?tierValue(node,field):$(field);const items=[...new Set([...control.value.split(/[\n,]/).map(s=>s.trim()).filter(Boolean),...values])];control.value=items.join(field==='areas'&&!node?'\n':', ');};
-  add('areas',chosenAreas);if(withBlocks)add('blocks',chosenBlocks);updateOverview();
-}

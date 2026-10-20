@@ -162,3 +162,32 @@ test('같은 상품과 실행이어도 새 문서는 이전 문서의 시각 보
 test('a hidden page executes the scheduled function at the deadline without waiting for focus',()=>{
  const f=fixture(),status=f.arm();f.document.hidden=true;f.clock();f.advance(99);f.activate();f.notify();assert.equal(f.clicks(),0);f.advance(100);assert.equal(f.clicks(),1);assert.equal(status.trigger,'server-clock');
 });
+
+test('예약 진입은 활성화된 준비 버튼도 최근 서버 시각과 시작 기한 확인 전에는 실행하지 않는다',()=>{
+  const f=fixture();f.activate();const status=f.arm({httpRetry:true,allowInitiallyEnabled:true});
+  assert.equal(f.clicks(),0);f.notify();assert.equal(f.clicks(),0);
+  f.clock();f.advance(99);f.notify();assert.equal(f.clicks(),0);
+  f.advance(100);f.notify();assert.equal(f.clicks(),1);assert.equal(status.trigger,'server-clock');
+});
+
+test('예약 진입의 시각이 실행 전 또는 비활성 대기 중 만료되면 새 보정 전까지 활성화도 보류한다',()=>{
+  for(const deadlineFired of [false,true]){
+    const f=fixture(),status=f.arm({httpRetry:true});f.clock({validUntilMono:150});
+    if(deadlineFired)f.advance(100);
+    f.elapseWithoutTasks(200);f.advance(200);f.activate();f.notify();
+    assert.equal(status.clock.outcome,'stale');assert.equal(status.phase,'armed');assert.equal(f.clicks(),0);
+    assert.equal(f.clock({deadlineMono:300,validUntilMono:1000}),true);
+    f.advance(299);f.notify();assert.equal(f.clicks(),0);
+    f.advance(300);assert.equal(f.clicks(),1);assert.equal(status.clickedMono,300);
+  }
+});
+
+test('준비 화면의 재보정 이전 지연 타이머는 새 시각을 발동 처리하거나 덮어쓸 수 없다',()=>{
+  const f=fixture(),status=f.arm({httpRetry:true});f.clock();
+  const pending=[...f.timers.values()].map(timer=>timer.fn);
+  assert.equal(f.clock({deadlineMono:300}),true);f.activate();f.elapseWithoutTasks(100);
+  for(const fn of pending)fn();
+  assert.equal(f.clicks(),0);assert.equal(status.clock.deadlineMono,300);
+  assert.equal(status.clock.outcome,'armed');assert.equal(status.clock.firedAtMono,undefined);
+  f.advance(300);assert.equal(f.clicks(),1);assert.equal(status.clickedMono,300);
+});
