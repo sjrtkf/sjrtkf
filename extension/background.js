@@ -3,6 +3,7 @@ importScripts('network-parsers.js','network-observer.js','http-navigation.js','c
 const ENDPOINT='http://127.0.0.1:43187';
 const capabilities=['entry.pageInfo','entry.bookingNotice','captcha.ocr','captcha.manual','extension.reload'];
 const PAGE_ACTIONS=new Set(['entry.pageInfo','entry.gameCards','entry.prepareEntry','entry.armListing','entry.setListingClock','entry.listingState','entry.stopListing','entry.gateStatus','entry.armGate','entry.setGateClock','entry.noteGateRequest','live.waitForChange','live.liveRead','live.liveAction','flow.scene','flow.clickKnown','flow.enterCode','flow.deselect','flow.dismissConflict','flow.dismissEmptySelection','pricePage.priceState','pricePage.adultPriceStep','pricePage.proceedBooking','pricePage.bookingProgress','observation.bookingObservation','directApi.bookingIdentity','publicGame.resolveGame','captcha.captchaSnapshot','captcha.captchaSubmit','captcha.captchaStatus','captcha.captchaCancel','captcha.captchaRefresh','manualCaptcha.manualCaptchaPrepare','manualCaptcha.manualCaptchaSubmit','manualCaptcha.manualCaptchaCancel','page.stopWatchers','page.pageClock','page.gateSnapshot','page.gateState','page.showAll','page.showAllGames']);
+PAGE_ACTIONS.add('entry.prepareScheduledGate');
 let token=null,connected=false,polling=false,pulseBusy=false,lastError='',revision=0,reconnectTimer=null,connectionEpoch=0,eventChain=Promise.resolve();const tracked=new Map(),epochs=new Map(),deliveredDocuments=new Map();
 const captchaRoutes=new Map();
 const codeDocuments=new Map(),codeInstance=String(Date.now())+':'+Math.random();

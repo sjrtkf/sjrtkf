@@ -177,6 +177,26 @@ function prepareEntry({key,runId=null}) {
   window.__bearsEntry={status,stop(){}};
   siteInvoke(button);return status;
 }
+// Prepare the authenticated public gate before the opening deadline. The
+// goods code has already been matched to this card using the public schedule.
+function prepareScheduledGate({key,goodsCode,placeCode}={}){
+  if(location.origin!=='https://nol.yanolja.com'||!/^\/ticket\/genre\/sports(?:\/|$)/.test(location.pathname)||typeof key!=='string'||!key.trim()||!/^\d{8}$/.test(String(goodsCode))||!/^\d{8}$/.test(String(placeCode)))throw Error('SITE_ENTRY_CONTROL_CHANGED');
+  const matches=[...document.querySelectorAll('button.grid-area_cta')].filter(button=>{
+    const card=button.parentElement,info=card?.querySelector('.grid-area_info')?.textContent?.trim(),teams=[...(card?.querySelectorAll('.grid-area_match img[alt]')||[])].map(image=>image.alt).join(' vs '),rect=button.getBoundingClientRect();
+    return button.isConnected!==false&&rect.width>0&&rect.height>0&&!!info&&!!teams&&info+' | '+teams===key;
+  });
+  if(matches.length!==1)throw Error(matches.length?'SITE_ENTRY_FUNCTION_AMBIGUOUS':'SITE_ENTRY_CONTROL_CHANGED');
+  window.__bearsEntry?.stop();
+  // Exact current public sports entry route (sports/344997). The normal SSO
+  // bridge supplies authentication; no token or signed request is extracted.
+  const gate=new URL('https://tickets.interpark.com/gates/partner');
+  gate.searchParams.set('bc','61776');gate.searchParams.set('gc',String(goodsCode));gate.searchParams.set('pc',String(placeCode));gate.searchParams.set('cc','Gates');
+  const rcd=new URLSearchParams(location.search||'').get('rcd');if(rcd)gate.searchParams.set('rcd',rcd);
+  const bridge=new URL('https://sso.yanolja.com/sso/v1/bridge/token');
+  bridge.searchParams.set('source','YANOLJA');bridge.searchParams.set('serviceDomainCode','NOL_TICKET');bridge.searchParams.set('redirectUrl',gate.href);
+  location.assign(bridge.href);
+  return {dispatched:true,goodsCode:String(goodsCode)};
+}
 function gateStatus({goodsCode}={}) {
   const match=location.origin==='https://tickets.interpark.com'&&location.pathname.match(/^\/gates\/ticket\/(\d{8})$/);
   const status={supported:!!match,goodsCode:match?match[1]:null,prepared:false,enabled:false,buttonText:null};
@@ -199,6 +219,10 @@ function gateStatus({goodsCode}={}) {
   const buttons=root?[...root.querySelectorAll('button')].filter(b=>visible(b)&&b.textContent.trim()!=='확인하고 예매하기'&&/(?:예매하기$|^남은시간\s*\d{1,2}:\d{2}$)/.test(b.textContent.trim())):[];
   if(!status.prepared||buttons.length!==1)return {...status,reason:'준비 완료 안내와 유일한 예매 버튼을 기다립니다.'};
   const button=buttons[0];status.buttonText=button.textContent.trim();
+  if(typeof resolveGateEntry==='function'){
+    try{status.entryReady=true;status.entryContract=resolveGateEntry(button).contract;}
+    catch(error){status.entryReady=false;status.entryCode=/^SITE_[A-Z_]+$/.test(error?.message||'')?error.message:'SITE_ENTRY_FUNCTION_UNAVAILABLE';}
+  }
   const blocked=status.notice.present||[...document.querySelectorAll('[role="dialog"], [aria-modal="true"], [aria-busy="true"]')].some(visible);
   status.enabled=!blocked&&!button.disabled&&button.getAttribute('aria-disabled')!=='true'&&status.buttonText==='예매하기';
   status.reason=blocked?'안내/인증/처리가 끝나기를 기다립니다.':status.enabled?'사이트가 예매 버튼을 활성화했습니다.':'사이트의 예매 버튼 활성화를 기다립니다.';
@@ -213,8 +237,16 @@ function armGate({goodsCode,runId=null,timeoutMs=15*86400000,httpRetry=false,all
   prior?.stop();
   const startPath=location.pathname,started=performance.now();
   const status={phase:'armed',documentId:String(performance.timeOrigin)+':'+started,goodsCode:String(goodsCode),runId,clickedAt:null,trigger:null,observedDisabled:false,clock:{outcome:'not-configured'},reason:'사이트의 예매 버튼 활성화를 기다립니다.'};
-  let observer,timer,clockTimer,http,done=false,inFlight=false,retryAt=0,attempts=0;
-  const stop=()=>{done=true;clearTimeout(timer);clearTimeout(clockTimer);observer?.disconnect();http?.stop();if(['armed','http-running'].includes(status.phase))status.phase='stopped';};
+  let observer,timer,clockTimer,http,pendingDispatch,done=false,inFlight=false,retryAt=0,attempts=0;
+  const stop=()=>{done=true;clearTimeout(timer);clearTimeout(clockTimer);observer?.disconnect();http?.stop();if(pendingDispatch){const pending=pendingDispatch;pendingDispatch=null;pending.reject(Error('SITE_CODE_STOPPED'));}if(['armed','http-running'].includes(status.phase))status.phase='stopped';};
+  const releaseDispatch=()=>{
+    if(!pendingDispatch||done)return;
+    const now=performance.now(),clock=status.clock;
+    if(!Number.isFinite(clock.deadlineMono)||now<clock.deadlineMono||now>clock.validUntilMono)return;
+    if(location.origin!=='https://tickets.interpark.com'||location.pathname!==startPath){stop();return;}
+    const pending=pendingDispatch;pendingDispatch=null;
+    status.trigger='server-clock';status.clock.outcome='clicked';pending.resolve();
+  };
   const visible=e=>{const r=e.getBoundingClientRect();const css=getComputedStyle(e);return r.width>0&&r.height>0&&css.visibility!=='hidden'&&css.display!=='none';};
   const tick=(source='activation')=>{
     if(done||status.phase==='http-running')return;clearTimeout(timer);
@@ -229,11 +261,35 @@ function armGate({goodsCode,runId=null,timeoutMs=15*86400000,httpRetry=false,all
     const blocked=notice||[...document.querySelectorAll('[role="dialog"], [aria-modal="true"], [aria-busy="true"]')].some(visible);
     const button=prepared&&buttons.length===1?buttons[0]:null;
     if(button&&!blocked&&(button.disabled||button.getAttribute('aria-disabled')==='true'))status.observedDisabled=true;
+    if(httpRetry&&button&&!blocked){
+      try{
+        if(typeof resolveGateEntry!=='function')throw Error('SITE_ENTRY_FUNCTION_UNAVAILABLE');
+        status.entryContract=resolveGateEntry(button).contract;status.entryReady=true;delete status.entryCode;
+      }catch(error){status.entryReady=false;status.entryCode=/^SITE_[A-Z_]+$/.test(error?.message||'')?error.message:'SITE_ENTRY_FUNCTION_UNAVAILABLE';}
+    }
     const now=performance.now(),firstAt=status.clock.deadlineMono;
     const configured=Number.isFinite(firstAt),clockValid=configured&&now<=status.clock.validUntilMono;
     if(configured&&!clockValid)status.clock.outcome='stale';
     if(httpRetry&&!clockValid){status.reason='유효한 서버 시각 설정을 기다립니다.';timer=setTimeout(tick,250);return;}
     if(clockValid&&now<firstAt){timer=setTimeout(tick,Math.min(250,firstAt-now));return;}
+    if(httpRetry&&http?.claimed){releaseDispatch();return;}
+    if(httpRetry&&button&&!blocked){
+      if(!status.entryReady){status.phase='blocked';status.reason='정시 진입 함수를 확인하지 못했습니다. ['+status.entryCode+']';stop();return;}
+      // The original callback performs all authenticated entry checks. Only
+      // its outer UI/countdown wrapper is omitted, and the runtime rechecks
+      // the committed callback plus the connection lease at invocation.
+      status.phase='clicked';status.trigger='server-clock';status.clickedAt=Date.now();status.clickedMono=performance.now();
+      status.invokeDelayMs=Math.max(0,status.clickedMono-firstAt);status.attempts=++attempts;
+      status.clock.outcome='clicked';status.reason='예약 시각 도달 · 사이트의 원래 진입 API 함수 실행';
+      clearTimeout(timer);clearTimeout(clockTimer);observer?.disconnect();inFlight=true;
+      const failed=()=>{inFlight=false;if(done||http?.claimed)return;status.phase='blocked';status.reason='정시 진입 함수가 API 요청을 만들지 못했습니다. 인증·상품 상태를 확인해 주세요.';stop();};
+      try{
+        Promise.resolve(siteInvoke(button,'scheduled-entry')).then(()=>{
+          inFlight=false;if(done||http?.claimed)return;failed();
+        }).catch(failed);
+      }catch{failed();}
+      return;
+    }
     if(button&&!blocked&&!button.disabled&&button.getAttribute('aria-disabled')!=='true'&&button.textContent.trim()==='예매하기'&&(status.observedDisabled||allowInitiallyEnabled)){
       // Both triggers acquire this latch synchronously, before dispatching.
       // A delivered DOM click is not evidence of an accepted server request.
@@ -272,13 +328,14 @@ function armGate({goodsCode,runId=null,timeoutMs=15*86400000,httpRetry=false,all
   };
   if(typeof createEntryHttp==='function'){
     const control=window.__ticketSiteCode,epoch=control?.epoch;
-    http=createEntryHttp({assertActive:()=>{if(done||location.pathname!==startPath||control&&(window.__ticketSiteCode!==control||control.epoch!==epoch||control.stopped||Date.now()>control.leaseUntil))throw Error('SITE_CODE_STOPPED');},onStatus:value=>{
+    http=createEntryHttp({assertActive:()=>{if(done||location.pathname!==startPath||control&&(window.__ticketSiteCode!==control||control.epoch!==epoch||control.stopped||Date.now()>control.leaseUntil))throw Error('SITE_CODE_STOPPED');},beforeSend:httpRetry?()=>new Promise((resolve,reject)=>{pendingDispatch={resolve,reject};releaseDispatch();}):null,onStatus:value=>{
       status.http=value;if(value.requestCount){status.phase='http-running';clearTimeout(timer);clearTimeout(clockTimer);observer?.disconnect();}
       if(Number.isFinite(value.startedMono)&&Number.isFinite(status.clickedMono))status.requestDelayMs=Math.max(0,value.startedMono-status.clickedMono);
+      if(Number.isFinite(value.startedMono)&&Number.isFinite(status.clock.deadlineMono))status.requestDeadlineDelayMs=value.startedMono-status.clock.deadlineMono;
     }});
   }
   window.__bearsGate={status,stop,setClock,requestObserved(){if(done||http?.claimed)return;status.phase='request-observed';status.reason='사이트의 진입 요청을 관찰했습니다.';stop();}};tick();return status;
 }
 function setGateClock(config){return window.__bearsGate?.setClock?.(config)||false;}
 function noteGateRequest({runId}={}){const gate=window.__bearsGate;if(gate?.status.runId!==runId)return null;gate.requestObserved?.();return gate.status;}
-module.exports={pageInfo,gameCards,armEntry,armListing,setListingClock,listingState,stopListing,prepareEntry,gateStatus,armGate,setGateClock,noteGateRequest};
+module.exports={pageInfo,gameCards,armEntry,armListing,setListingClock,listingState,stopListing,prepareEntry,prepareScheduledGate,gateStatus,armGate,setGateClock,noteGateRequest};

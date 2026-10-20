@@ -19,7 +19,7 @@ function classifyEntryResponse(status,body){
 
 // Guard one operation per document/run. Never replay a signed request. Multiple
 // local callers share the same result, including a rejection or unknown outcome.
-function createEntryHttp({assertActive,onStatus=()=>{}}){
+function createEntryHttp({assertActive,onStatus=()=>{},beforeSend=null}){
   const original=window.fetch;let stopped=false,claimed=false,task=null,requestBody,requestMethod;
   const status={outcome:'waiting',requestCount:0,code:null,httpStatus:null};
   const report=patch=>{Object.assign(status,patch);onStatus({...status});};
@@ -40,6 +40,7 @@ function createEntryHttp({assertActive,onStatus=()=>{}}){
       if(init?.method!=='POST'||typeof init.body!=='string'||init.body.length>65536||input instanceof Request)throw Error('SITE_ENTRY_REQUEST_UNSUPPORTED');
       let payload;try{payload=JSON.parse(init.body);}catch{throw Error('SITE_ENTRY_REQUEST_UNSUPPORTED');}
       if(typeof payload.signature!=='string'||!payload.signature||typeof payload.secureData!=='string'||!payload.secureData)throw Error('SITE_ENTRY_REQUEST_UNSUPPORTED');
+      if(beforeSend){report({outcome:'scheduled',preparedMono:performance.now()});await beforeSend();active();}
       report({outcome:'pending',requestCount:1,startedMono:performance.now()});
       let response,body;
       try{

@@ -1,7 +1,7 @@
 'use strict';
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),path=require('node:path');
 const {createRequire}=require('node:module');
-function setup({savedPreferences=null,writeError=false,savedLastRun=null,ocr=null,clock=null}={}){
+function setup({savedPreferences=null,savedDesktop=null,writeError=false,savedLastRun=null,ocr=null,clock=null}={}){
   const filename=path.resolve(__dirname,'../src/chrome-main.js'),rawLoad=createRequire(filename),load=n=>n==='node:perf_hooks'&&clock?{performance:{now:clock}}:rawLoad(n),source=fs.readFileSync(filename,'utf8').split('app.whenReady().then')[0];
   const calls=[];
   class Target{
@@ -9,15 +9,32 @@ function setup({savedPreferences=null,writeError=false,savedLastRun=null,ocr=nul
     async invoke(fn,arg){if(fn?.name==='httpBookingAction'){calls.push({fn,arg,id:this.id});return context.httpInvoke?context.httpInvoke(fn,arg):{stage:'ready',status:'pending',requestCount:6,heldCount:2,confirmed:true,validated:true};}if(fn?.name==='httpBookingNavigate'){calls.push({fn,arg,id:this.id});return context.httpInvoke?context.httpInvoke(fn,arg):arg.checkOnly?{supported:true}:{dispatched:true};}if(context.priceInvoke&&['proceedBooking','bookingProgress','priceState','adultPriceStep'].includes(fn?.name)){calls.push({fn,arg,id:this.id});return context.priceInvoke(fn,arg);}if(fn?.name==='priceState')return {ready:true,quantity:context.api?.runs.current?.preferences.quantity||2};if(fn?.name==='proceedBooking')return {dispatched:true};if(fn?.name==='bookingProgress')return {ready:true};if(fn?.name==='adultPriceStep')return {status:'complete',message:'가격/할인 화면 · 성인 가격 확인'};if(fn?.name==='bookingIdentity')return context.bookingIdentity||{goodsCode:'26005452',placeCode:'25001730',playSeq:'001'};if(fn?.name==='resolveGame')return {goodsCode:'26005452',placeCode:'25001730',playSeq:'001'};calls.push({fn,arg,id:this.id});if(context.invoke)return context.invoke(fn,arg);if(fn==='gateState')return null;if(fn?.name==='scene')return {selected:[],buttons:[],grades:[],hasSeats:false};return {};}
   }
   const electron={app:{isPackaged:false,getAppPath:()=>path.resolve(__dirname,'..'),setPath(){}},powerSaveBlocker:{start:()=>1,isStarted:()=>true,stop(){}},shell:{openExternal:async url=>calls.push({external:url})}};
-  const context={require:n=>n==='electron'?electron:n==='./ocr-client'&&ocr?{OcrClient:class{async warmup(){return {};}async recognize(data,options){calls.push({ocr:true});return ocr(data,options);}close(){}}}:n==='./chrome-target'?{ChromeTarget:Target}:n==='./browser-bridge'?{BrowserBridge:class{}}:n==='node:fs'?{...fs,statSync(file){if(savedLastRun&&file.endsWith('last-run.json'))return {size:JSON.stringify(savedLastRun).length};throw Error('fixture');},readFileSync(file){if(savedPreferences&&file.endsWith('preferences.json'))return JSON.stringify(savedPreferences);if(savedLastRun&&file.endsWith('last-run.json'))return JSON.stringify(savedLastRun);throw Error('fixture');},mkdirSync(){},readdirSync(){return [];},appendFileSync(file,body){if(writeError)throw Error("fixture write failure");(context.logs??=[]).push({file,body});},writeFileSync(file,body){if(writeError)throw Error('fixture write failure');calls.push({write:file,body});}}:load(n),__dirname:path.dirname(filename),process:{argv:[],pid:0},URL,URLSearchParams,Date,console,setTimeout,clearTimeout};
+  const context={require:n=>n==='electron'?electron:n==='./ocr-client'&&ocr?{OcrClient:class{async warmup(){return {};}async recognize(data,options){calls.push({ocr:true});return ocr(data,options);}close(){}}}:n==='./chrome-target'?{ChromeTarget:Target}:n==='./browser-bridge'?{BrowserBridge:class{}}:n==='node:fs'?{...fs,statSync(file){if(savedLastRun&&file.endsWith('last-run.json'))return {size:JSON.stringify(savedLastRun).length};throw Error('fixture');},readFileSync(file){if(savedDesktop&&file.endsWith('settings.json'))return JSON.stringify(savedDesktop);if(savedPreferences&&file.endsWith('preferences.json'))return JSON.stringify(savedPreferences);if(savedLastRun&&file.endsWith('last-run.json'))return JSON.stringify(savedLastRun);throw Error('fixture');},mkdirSync(){},readdirSync(){return [];},appendFileSync(file,body){if(writeError)throw Error("fixture write failure");(context.logs??=[]).push({file,body});},writeFileSync(file,body){if(writeError)throw Error('fixture write failure');calls.push({write:file,body});}}:load(n),__dirname:path.dirname(filename),process:{argv:[],pid:0},URL,URLSearchParams,Date,console,setTimeout,clearTimeout};
   vm.createContext(context);vm.runInContext(source+`
   bridge={getState:()=>globalThis.bridgeState||{},listTabs:()=>globalThis.bridgeTabs||[],request:async q=>{globalThis.calls.push(q);if(q.action==='tabs.open'&&globalThis.openedTab)return globalThis.openedTab;if(q.action==='network.attach'&&globalThis.attachPromise)await globalThis.attachPromise;if(q.action==='network.snapshot')return globalThis.network;return {};}};
-  globalThis.api={scheduleGateClock,pinListingDocument,rememberListing,setClock:value=>clockInfo=value,runHttpBooking,selectCandidates,rankRunSeats,followNoticeDocument,finishPriceSelection,finishBookingButton,recoverPriceSelection,autoLoop,trackTabs,onDocument,onBrowserEvent,command,selectionAdapter,beginRun,targets,runs,metaStores,scopeVersions,validHome,isEntryPage,ensureNetwork,networkSnapshot,runJs,readEntryPage,acknowledgeNotice,launch,stopRun,finishRun,last:()=>lastRun,warning:()=>diagnosticWarning,revision:()=>revision,preferences:()=>preferences,
+  globalThis.api={scheduleGateClock,pinListingDocument,rememberGate,rememberListing,setClock:value=>clockInfo=value,runHttpBooking,selectCandidates,rankRunSeats,followNoticeDocument,finishPriceSelection,finishBookingButton,recoverPriceSelection,autoLoop,trackTabs,onDocument,onBrowserEvent,command,selectionAdapter,beginRun,targets,runs,metaStores,scopeVersions,validHome,isEntryPage,ensureNetwork,networkSnapshot,runJs,readEntryPage,acknowledgeNotice,launch,stopRun,finishRun,last:()=>lastRun,warning:()=>diagnosticWarning,revision:()=>revision,preferences:()=>preferences,
     applyGradeDetails,gradeStores,recoverSeatDetails,current,active:()=>active,begin:id=>{active=id;return beginRun(targets.get(id),{},'auto');},setTask:p=>runner.task=p};`,context);
   context.calls=calls;context.network={healthy:true,sequence:0,pending:[],results:[]};
   return {api:context.api,context,calls};
 }
 const gate=(id,extra={})=>({id,url:'https://tickets.interpark.com/gates/ticket/26005452',title:'gate',documentId:'initial-document',...extra});
+test('entry strategy and offset survive desktop settings reload without a browser action',async()=>{
+  const first=setup();const result=await first.api.command('entrySettings',{entryStrategy:'clock',entryOffsetMs:-125});
+  assert.equal(result.desktop.entryStrategy,'clock');assert.equal(result.desktop.entryOffsetMs,-125);
+  const saved=JSON.parse(first.calls.find(call=>call.write?.endsWith('settings.json')).body);
+  const reloaded=setup({savedDesktop:saved});const restored=await reloaded.api.command('entrySettings',{});
+  assert.equal(restored.desktop.entryStrategy,'clock');assert.equal(restored.desktop.entryOffsetMs,-125);
+  assert.equal(reloaded.calls.length,0);assert.equal(first.calls.filter(call=>!call.write).length,0);
+});
+test('invalid entry preferences and failed persistence leave the previous settings unchanged',async()=>{
+  const savedDesktop={entryStrategy:'clock',entryOffsetMs:20};
+  const {api,calls}=setup({savedDesktop});
+  for(const input of [{entryStrategy:'invalid'},{entryOffsetMs:251},{entryOffsetMs:0.5}])await assert.rejects(api.command('entrySettings',input),/진입/);
+  assert.equal(calls.length,0);assert.equal((await api.command('entrySettings',{})).desktop.entryOffsetMs,20);
+  const failing=setup({savedDesktop,writeError:true});
+  await assert.rejects(failing.api.command('entrySettings',{entryOffsetMs:30}),/write failure/);
+  assert.equal((await failing.api.command('entrySettings',{})).desktop.entryOffsetMs,20);
+});
 test('removed standalone seat and profile commands cannot read or mutate a booking page',async()=>{
   const {api,calls}=setup();api.trackTabs([gate(1,{url:'https://tickets.interpark.com/onestop/seat'})]);
   for(const action of ['scan','seat','catalog','recommend','choose','complete','venueSelect','venueCreate'])await assert.rejects(api.command(action,{}),/지원하지 않는 동작/);
@@ -242,7 +259,7 @@ test('loss on an old parent tab cannot overwrite the active popup result',()=>{
 });
 test('older extension cannot begin the updated seat flow before any browser action',async()=>{
   const {api,context,calls}=setup();api.trackTabs([gate(1)]);context.bridgeState={extensionVersion:'0.9.3'};
-  await assert.rejects(api.command('start',{}),/v0.9.27/);assert.equal(api.runs.current,null);assert.equal(calls.length,0);
+  await assert.rejects(api.command('start',{}),/v0.9.28/);assert.equal(api.runs.current,null);assert.equal(calls.length,0);
 });
 test('Chrome targets: only a child of the running tab is adopted; unrelated tabs do not switch target',()=>{
   const {api}=setup();api.trackTabs([gate(1),gate(7)]);const run=api.begin(1);run.entryActionsStarted=true;
@@ -933,7 +950,7 @@ test('unknown or quantity-only prices, existing holds and resumed price steps st
 
 test('starting on a countdown gate preserves the supplied schedule and arms conditional HTTP',async()=>{
   const {api,context}=setup();api.trackTabs([gate(1)]);const opening=Date.now()+120000;
-  context.bridgeState={extensionVersion:'0.9.27'};
+  context.bridgeState={extensionVersion:'0.9.28'};
   context.invoke=(fn,arg)=>{
     if(fn?.name==='gateStatus')return {supported:true,goodsCode:'26005452',prepared:true,enabled:false};
     if(fn==='gateState')return null;
@@ -946,7 +963,7 @@ test('starting on a countdown gate preserves the supplied schedule and arms cond
 });
 test('conditional entry refuses an extension without the new HTTP runtime',async()=>{
   const {api,context,calls}=setup();api.trackTabs([gate(1)]);context.bridgeState={extensionVersion:'0.9.18'};
-  await assert.rejects(api.command('start',{entryStrategy:'clock',openAt:Date.now()+10000}),/v0.9.27/);assert.equal(calls.length,0);
+  await assert.rejects(api.command('start',{entryStrategy:'clock',openAt:Date.now()+10000}),/v0.9.28/);assert.equal(calls.length,0);
 });
 
 test('listing start waits through disabled states and follows activation to the seat route exactly once',async()=>{
@@ -986,16 +1003,23 @@ for(const failure of ['blocked','stopped','missing','reloaded'])test(`listing ${
   assert.equal(calls.filter(c=>c.fn?.name==='armListing').length,1);assert.equal(api.last().entry.seatPageObserved,false);
 });
 
-test('listing waits retain the scheduled time and pass clockRequired to the browser',async()=>{
+test('scheduled listing start prepares the verified gate without waiting for listing button activation',async()=>{
   const {api,context,calls}=setup();api.trackTabs([gate(1,{url:'https://nol.yanolja.com/ticket/genre/sports/postseason'})]);const opening=Date.now()+120000;
   context.invoke=(fn,arg)=>{
     if(fn?.name==='gameCards')return [{key:'wanted',schedule:''}];
-    if(fn?.name==='armListing'){assert.equal(arg.clockRequired,true);assert.equal(api.runs.current.openAt,opening);throw Error('FIXTURE_LISTING_ARMED');}
+    if(fn?.name==='prepareScheduledGate'){assert.equal(arg.key,'wanted');assert.equal(arg.goodsCode,'26005452');assert.equal(arg.placeCode,'25001730');assert.equal(api.runs.current.openAt,opening);throw Error('FIXTURE_GATE_PREPARATION');}
     if(fn==='stopWatchers')return true;
     throw Error('Unexpected '+(fn?.name||fn));
   };
-  await api.command('start',{key:'wanted',entryStrategy:'clock',openAt:opening});const run=api.runs.current;await assert.rejects(run.task,/FIXTURE_LISTING_ARMED/);
-  assert.equal(calls.filter(c=>c.fn?.name==='armListing').length,1);
+  await api.command('start',{key:'wanted',entryStrategy:'clock',openAt:opening});const run=api.runs.current;await assert.rejects(run.task,/FIXTURE_GATE_PREPARATION/);
+  assert.equal(calls.filter(c=>c.fn?.name==='armListing').length,0);assert.equal(calls.filter(c=>c.fn?.name==='prepareScheduledGate').length,1);
+});
+test('scheduled listing start refuses an unknown opening time instead of silently using activation mode',async()=>{
+  const {api,context,calls}=setup();api.trackTabs([gate(1,{url:'https://nol.yanolja.com/ticket/genre/sports/postseason'})]);
+  context.invoke=fn=>fn?.name==='gameCards'?[{key:'wanted',schedule:''}]:{};
+  await api.command('start',{key:'wanted',entryStrategy:'clock'});const run=api.runs.current;
+  await assert.rejects(run.task,/예매 시작 시각을 확인하지 못했습니다/);
+  assert.equal(calls.some(call=>['armListing','prepareScheduledGate'].includes(call.fn?.name)),false);
 });
 
 test('a clock sample is installed once per listing or gate document, including a listing-to-gate transition',async()=>{
@@ -1075,4 +1099,97 @@ for(const listing of [false,true])test(`an expired ${listing?'listing':'gate'} c
   context.invoke=fn=>fn==='pageClock'?{pageMono:performance.now(),documentId:'listing-clock'}:fn?.name===action;
   await api.scheduleGateClock(run,api.current(),{phase:'armed',documentId:'listing-clock',clock:{outcome:'stale',firedAtMono:1}},{listing});
   assert.equal(calls.filter(c=>c.fn?.name===action).length,1);
+});
+
+for(const lostReply of [false,true])test(`saved scheduled mode follows SSO and partner preparation once with ${lostReply?'lost':'confirmed'} dispatch reply`,async()=>{
+  const {api,context,calls}=setup({savedDesktop:{entryStrategy:'clock',entryOffsetMs:-75}});
+  api.trackTabs([gate(1,{url:'https://nol.yanolja.com/ticket/genre/sports/postseason'})]);
+  context.invoke=(fn,arg)=>{
+    if(fn?.name==='gameCards')return [{key:'wanted',schedule:''}];
+    if(fn?.name==='prepareScheduledGate'){
+      assert.equal(arg.placeCode,'25001730');
+      const navigate=()=>api.trackTabs([gate(1,{url:'https://sso.yanolja.com/sso/v1/bridge/token',documentId:'sso-document'})]);
+      if(lostReply)setTimeout(navigate,5);else navigate();
+      setTimeout(()=>api.trackTabs([gate(1,{url:'https://tickets.interpark.com/gates/partner',documentId:'partner-document'})]),35);
+      setTimeout(()=>api.trackTabs([gate(1,{documentId:'prepared-gate-document'})]),150);
+      if(lostReply)throw Error('사이트 코드 실행 결과를 확인하지 못했습니다. 같은 동작을 반복하지 않습니다.');
+      return {dispatched:true};
+    }
+    if(fn?.name==='gateStatus')return {supported:true,goodsCode:'26005452',enabled:false,notice:{present:false}};
+    if(fn==='gateState')return null;
+    if(fn?.name==='armGate'){
+      assert.equal(arg.httpRetry,true);assert.equal(api.runs.current.entry.offsetMs,-75);
+      assert.ok(calls.filter(c=>c.action==='network.attach').length>=2);
+      throw Error('FIXTURE_SCHEDULED_GATE_READY');
+    }
+    if(fn==='stopWatchers')return true;
+    throw Error('Unexpected '+(fn?.name||fn));
+  };
+  await api.command('start',{key:'wanted',openAt:Date.now()+120000});const run=api.runs.current;
+  await assert.rejects(run.task,/FIXTURE_SCHEDULED_GATE_READY/);
+  assert.equal(calls.filter(c=>c.fn?.name==='prepareScheduledGate').length,1);
+  assert.equal(calls.filter(c=>c.fn?.name==='armGate').length,1);
+  assert.equal(calls.some(c=>c.fn?.name==='armListing'),false);
+  assert.equal(calls.some(c=>c.write?.endsWith('settings.json')),false);
+});
+
+test('scheduled preparation tolerates an omitted SSO tab for 45 seconds and reconnects before arming',async()=>{
+  const {api,context,calls}=setup();api.trackTabs([gate(1,{url:'https://nol.yanolja.com/ticket/genre/sports/postseason'})]);
+  const run=api.begin(1);Object.assign(run,{listingPreparationSent:true,listingDispatchedAt:Date.now()-20000,clockEligible:true,openAt:Date.now()+10000,goodsCode:'26005452',entryActionsStarted:true});run.entry.strategy='clock';
+  api.onBrowserEvent({type:'entry',tabId:1,event:{kind:'observer-lost',reason:'manual-detach'}});
+  assert.equal(run.signal.aborted,false);assert.equal(run.entry.observerLost,undefined);
+  api.trackTabs([]);api.targets.get(1).missingSince=Date.now()-20000;
+  context.invoke=fn=>{
+    if(fn?.name==='gateStatus')return {supported:true,goodsCode:'26005452',enabled:false,notice:{present:false}};
+    if(fn==='gateState')return null;
+    if(fn?.name==='armGate'){assert.ok(calls.some(c=>c.action==='network.attach'));throw Error('FIXTURE_RECONNECTED');}
+    if(fn==='stopWatchers')return true;
+    throw Error('Unexpected '+(fn?.name||fn));
+  };
+  setTimeout(()=>{api.trackTabs([gate(1,{documentId:'prepared-gate-document'})]);api.onDocument({tabId:1,documentId:'prepared-gate-document'});},10);
+  await assert.rejects(api.autoLoop(run),/FIXTURE_RECONNECTED/);
+  assert.equal(calls.filter(c=>c.fn?.name==='armGate').length,1);
+  assert.equal(run.preparationNetworkReady,true);
+});
+
+test('scheduled preparation timeout never retries navigation or entry',async()=>{
+  const {api,calls}=setup();api.trackTabs([gate(1,{url:'https://nol.yanolja.com/ticket/genre/sports/postseason'})]);
+  const run=api.begin(1);Object.assign(run,{listingPreparationSent:true,listingDispatchedAt:Date.now()-46000});
+  api.trackTabs([]);api.targets.get(1).missingSince=Date.now()-46000;
+  await assert.rejects(api.autoLoop(run),/45초.*로그인.*다시 시작/);
+  assert.equal(calls.length,0);
+});
+
+for(const failure of ['페이지가 바뀌어 이전 화면의 동작을 취소했습니다.',lostCodeResult])test(`scheduled clock dispatch observes navigation without replay after ${failure}`,async()=>{
+  const {api,context,calls}=setup(),{performance}=require('node:perf_hooks');api.trackTabs([gate(1)]);
+  const run=api.begin(1),mono=performance.now(),epoch=Date.now();Object.assign(run,{goodsCode:'26005452',openAt:epoch-10,clockEligible:true,lastClockRefresh:mono});run.entry.strategy='clock';
+  api.setClock({source:'ticket-server',anchorMonoMs:mono,serverEpochAtAnchorMs:epoch,rttMs:10,uncertaintyMs:6});
+  context.invoke=fn=>{
+    if(fn==='pageClock')return {pageMono:performance.now(),documentId:'gate-clock'};
+    if(fn?.name==='setGateClock'){
+      setTimeout(()=>api.trackTabs([gate(1,{url:'https://tickets.interpark.com/waiting',documentId:'queue-document'})]),5);
+      throw Error(failure);
+    }
+    throw Error('Unexpected '+(fn?.name||fn));
+  };
+  await api.scheduleGateClock(run,api.current(),{phase:'armed',documentId:'gate-clock',clock:{outcome:'not-configured'}});
+  assert.equal(calls.filter(c=>c.fn?.name==='setGateClock').length,1);
+});
+
+test('request completion refreshes previously missing deadline timing without an entry mutation',async()=>{
+  const {api,context,calls}=setup();api.trackTabs([gate(1)]);const run=api.begin(1);run.entryRequests.add('1:1');run.entry.requestCount=1;
+  api.rememberGate(run,{runId:run.id,attempts:1,invokeDelayMs:0.5});
+  context.invoke=fn=>{assert.equal(fn,'gateState');return {runId:run.id,attempts:1,invokeDelayMs:0.5,requestDelayMs:1.5,requestDeadlineDelayMs:2.25,clock:{outcome:'clicked',delayMs:0.75}};};
+  api.onBrowserEvent({type:'entry',tabId:1,event:{kind:'finished',seq:1,outcome:'redirect-ready',code:'VALID_REDIRECT',status:200}});
+  await new Promise(resolve=>setTimeout(resolve,0));
+  const events=context.logs.map(line=>JSON.parse(line.body));
+  assert.ok(events.some(e=>e.event==='entry-trigger'&&e.requestDeadlineDelayMs===2.25));
+  assert.equal(calls.filter(c=>c.fn==='gateState').length,1);
+  assert.equal(calls.some(c=>c.fn?.name==='armGate'||c.fn?.name==='noteGateRequest'),false);
+});
+
+test('live validation controls are rejected before starting a normal desktop run',async()=>{
+  const {api,calls}=setup();api.trackTabs([gate(1,{url:'https://tickets.interpark.com/onestop/seat'})]);
+  await assert.rejects(api.command('start',{validationExpectedBooking:{goodsCode:'26005452',placeCode:'25001730',playSeq:'001'}}),/명시적으로 실행한 검증 모드/);
+  assert.equal(api.runs.current,null);assert.equal(calls.length,0);
 });

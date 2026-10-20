@@ -7,6 +7,9 @@ function safeDetail(input={}){
   const out={};
   for(const key of ['action','stage','message','pageStage','kind','result','reason'])if(typeof input[key]==='string')out[key]=safeText(input[key],500);
   for(const key of ['elapsedMs','durationMs','status','count','cycle','planCount','rowCount','availableCount','detailedCount','pooledCount','missingGradeCount','missingRowCount','missingNumberCount','missingMetadataCount','unsupportedRowCount','unsupportedNumberCount','nonExposableCount','groupedCount','duplicateCount','blockCount','gradeCount','conflictCount','selectedCount','candidateCount','rank','invokeDelayMs','requestDelayMs','timerDelayMs'])if(Number.isFinite(input[key])&&input[key]>=0)out[key]=input[key];
+  // Signed timing distinguishes early dispatch from lateness against the
+  // corrected deadline; never include the signed API request itself.
+  if(Number.isFinite(input.requestDeadlineDelayMs))out.requestDeadlineDelayMs=input.requestDeadlineDelayMs;
   if(Array.isArray(input.grades))out.grades=input.grades.slice(0,60).map(g=>({name:safeText(g.name,150),code:safeText(g.code,50),count:Number.isFinite(g.count)&&g.count>=0?g.count:null,eligible:g.eligible===true,reasons:(Array.isArray(g.reasons)?g.reasons:[]).slice(0,8).map(r=>safeText(r,60))}));
   if(Array.isArray(input.seatSamples))out.seatSamples=input.seatSamples.filter(s=>s&&typeof s==='object').slice(0,8).map(s=>{
     const sample={};

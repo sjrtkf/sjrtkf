@@ -1,7 +1,7 @@
 'use strict';
 const {test}=require('node:test'),assert=require('node:assert/strict');
 const fs=require('node:fs'),path=require('node:path'),os=require('node:os');
-const {POSTSEASON,entryUrl,cleanSettings,migrateSettings,visibleBounds,revealWindow,bridgeFailure}=require('../src/desktop-settings');
+const {POSTSEASON,entryUrl,entrySettings,cleanSettings,migrateSettings,visibleBounds,revealWindow,bridgeFailure}=require('../src/desktop-settings');
 const primary={workArea:{x:0,y:0,width:1920,height:1040}},left={workArea:{x:-1280,y:0,width:1280,height:720}};
 function fixture(t){
   const parent=path.resolve(os.tmpdir()),root=fs.mkdtempSync(path.join(parent,'baseball-settings-'));
@@ -13,6 +13,25 @@ test('settings retain a valid saved destination and remove session parameters an
   assert.equal(settings.pageUrl,'https://nol.yanolja.com/ticket/genre/sports/bears');assert.equal(settings.alwaysOnTop,false);assert.equal('token' in settings,false);assert.equal('cookie' in settings,false);
   assert.equal(cleanSettings().pageUrl,POSTSEASON);
   for(const value of ['https://user:pass@nol.yanolja.com/ticket','https://evil.test/ticket','https://nol.yanolja.com.evil.test/ticket','file:///tmp/page','https://tickets.interpark.com/onestop/seat'])assert.equal(entryUrl(value),null);
+});
+test('entry strategy and signed millisecond adjustment survive settings serialization independently of clock samples',()=>{
+  for(const offset of [-250,-80,0,125,250]){
+    const saved=cleanSettings({entryStrategy:'clock',entryOffsetMs:offset,clockInfo:{serverNowMs:123,anchorMonoMs:456}});
+    const loaded=cleanSettings(JSON.parse(JSON.stringify(saved)));
+    assert.equal(loaded.entryStrategy,'clock');assert.equal(loaded.entryOffsetMs,offset);assert.equal('clockInfo' in loaded,false);
+  }
+  assert.deepEqual(entrySettings(cleanSettings()),{entryStrategy:'site',entryOffsetMs:0});
+});
+test('corrupt saved entry values use safe defaults, while explicit changes reject invalid values',()=>{
+  for(const entryOffsetMs of [null,'-50','',-251,251,1.5,NaN,Infinity]){
+    assert.equal(cleanSettings({entryStrategy:'clock',entryOffsetMs}).entryOffsetMs,0);
+    assert.throws(()=>entrySettings({entryStrategy:'clock',entryOffsetMs},{strict:true}),/-250~250ms/);
+  }
+  for(const entryStrategy of [null,'api','',42]){
+    assert.equal(cleanSettings({entryStrategy,entryOffsetMs:100}).entryStrategy,'site');
+    assert.throws(()=>entrySettings({entryStrategy,entryOffsetMs:100},{strict:true}),/진입 방식/);
+  }
+  assert.deepEqual(entrySettings({entryStrategy:'site',entryOffsetMs:-250},{strict:true}),{entryStrategy:'site',entryOffsetMs:-250});
 });
 test('v0.5 migration copies only normalized preferences/settings and leaves sources untouched',t=>{
   const {old,dest}=fixture(t);const prefs=JSON.stringify({quantity:3,requireTogether:true,token:'private',tiers:[{name:'앞줄',minRow:1,maxRow:5,secret:'no'}]});

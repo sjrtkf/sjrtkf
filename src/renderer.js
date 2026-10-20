@@ -3,6 +3,7 @@ const $=id=>document.getElementById(id);
 let gameRows=[],prefInitialized=false,running=false,localBusy=0,currentTargetUrl='',currentTargetId=null,lastRunId=null,currentEntry=null,browserConnected=null,pageUrlInitialized=false;
 let activeStep='connect',savedPrefsSnapshot=null,latestPageInfo=null,pairingExpiryTimer=null;
 let preflightFingerprint=null,lastPreflightState='',lastRunRecord=null;
+let entrySettingsInitialized=false,entrySettingsSave=Promise.resolve();
 let captchaState={available:false,ready:false,busy:false,message:'인식 프로그램 준비 상태를 확인하고 있습니다.',text:'',confidence:null,mode:null},captchaPending=false;
 let manualCaptchaState={present:false,supported:false,status:'idle',challengeId:null,imageDataUrl:null,existingText:'',message:'이미지 보기·입력 준비를 눌러 주세요.',targetId:null,busy:false},manualCaptchaPending=false,manualCaptchaShownKey=null,manualCaptchaSubmittedKey=null;
 const POSTSEASON_URL='https://nol.yanolja.com/ticket/genre/sports/postseason';
@@ -216,16 +217,41 @@ function showClock(c){
   const direction=difference<.0005?'PC와 거의 같음':'PC보다 '+difference.toFixed(3)+'초 '+(c.offsetMs>=0?'빠름':'느림');
   $('clockInfo').textContent=(c.source==='ticket-server'?'예매 서버: ':'웹 응답 시계(대체): ')+direction+' · 오차 약 ±'+(c.uncertaintyMs/1000).toFixed(3)+'초';
   const measured=Number.isFinite(c.measuredAt)?new Date(c.measuredAt).toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit',second:'2-digit',timeZone:'Asia/Seoul'})+' 측정. ':'';
-  $('clockHint').textContent=measured+(c.source==='ticket-server'?'사이트 시계를 읽은 당시의 차이입니다. 시험 방식은 예매 시작이 가까워지면 다시 확인합니다.':'예매 서버 시계를 읽지 못해 일반 웹 응답으로 추정했습니다. 이 값으로 정시 클릭을 예약하지 않습니다.');
+  $('clockHint').textContent=measured+(c.source==='ticket-server'?'사이트 시계를 읽은 당시의 차이입니다. 예약 진입은 예매 시작이 가까워지면 다시 확인합니다.':'예매 서버 시계를 읽지 못해 일반 웹 응답으로 추정했습니다. 이 값으로 정시 API 진입을 예약하지 않습니다.');
 }
-const clockOutcomeLabel=value=>({'not-configured':'사용 안 함','waiting-sync':'시각 확인 중','armed':'예약됨','not-ready':'예정 시각에 준비되지 않음 · 활성화 감지 유지','stale':'시각 정보 만료 · 최근 시각 확인 대기','clicked':'함수 실행','fallback':'기본 활성화 감지로 진행'}[value]||'미확인');
+const clockOutcomeLabel=value=>({'not-configured':'사용 안 함','waiting-sync':'시각 확인 중','armed':'예약됨','not-ready':'예정 시각에 진입 준비되지 않음','stale':'시각 정보 만료 · 최근 시각 확인 대기','clicked':'API 함수 실행','fallback':'기본 활성화 감지로 진행'}[value]||'미확인');
 function showEntryMode(){
   if(targetIsSeat()){$('entryMode').textContent='이미 열린 좌석 화면에서 시작합니다. 시작 버튼을 누르면 현재 화면과 선택 상태부터 확인하며 예매 진입 요청이나 오픈 시각 예약은 실행하지 않습니다.';return;}
   if(running&&currentEntry){
-    $('entryMode').textContent=currentEntry.strategy==='clock'?'이번 작업: 서버 시각 + 활성화 감지. '+(currentEntry.clockReason||'사이트 활성화 후 진입 함수를 실행합니다.'):'이번 작업: 사이트 활성화 감지. 사이트가 예매 버튼을 활성화하면 진입 함수를 실행합니다.';
+    $('entryMode').textContent=currentEntry.strategy==='clock'?'이번 작업: 예약 시각 API 진입. '+(currentEntry.clockReason||'보정한 서버 시각에 진입 API 함수를 실행합니다. 버튼 활성화를 기다리지 않습니다.'):'이번 작업: 사이트 활성화 감지. 사이트가 예매 버튼을 활성화하면 진입 함수를 실행합니다.';
     return;
   }
-  $('entryMode').textContent=targetIsGate()?'현재 준비 화면에서 시작합니다. 공식 시각으로 되돌리기로 포스트시즌 시작 시각을 읽거나 예약 시각을 직접 입력하세요.':$('entryStrategy').value==='clock'?'보정한 예약 시각과 사이트 활성화를 모두 확인하여 진입합니다. 요청이 발생하지 않은 경우만 다시 확인하며, 느린 응답에는 중복 전송하지 않습니다.':'로그인 후 경기 목록에서 시작하면 선택한 예매 버튼의 활성화를 기다립니다. 준비 화면으로 이동하면 해당 화면에서 계속 진행합니다.';
+  $('entryMode').textContent=(targetIsGate()?'현재 준비 화면에서 시작합니다. ':'')+($('entryStrategy').value==='clock'?'보정한 서버 시각에 사이트의 원래 진입 API 함수를 실행합니다. 버튼 활성화를 기다리지 않습니다. 서버 시각이나 준비 함수를 확인하지 못하면 활성화 대기로 전환하지 않고 중단합니다.':'로그인 후 경기 목록이나 준비 화면에서 선택한 예매 버튼의 활성화를 기다립니다.');
+}
+function readEntrySettings(){
+  const raw=$('entryOffsetMs').value,entryOffsetMs=Number(raw),entryStrategy=$('entryStrategy').value;
+  const valid=raw.trim()!==''&&Number.isInteger(entryOffsetMs)&&entryOffsetMs>=-250&&entryOffsetMs<=250&&['site','clock'].includes(entryStrategy);
+  $('entryOffsetMs').setCustomValidity(valid?'':'진입 시각 보정은 -250~250ms 범위의 정수로 입력해 주세요.');
+  return valid?{entryStrategy,entryOffsetMs}:null;
+}
+function restoreEntrySettings(desktop){
+  if(entrySettingsInitialized||!desktop)return;
+  $('entryStrategy').value=desktop.entryStrategy==='clock'?'clock':'site';
+  $('entryOffsetMs').value=Number.isInteger(desktop.entryOffsetMs)&&desktop.entryOffsetMs>=-250&&desktop.entryOffsetMs<=250?desktop.entryOffsetMs:0;
+  entrySettingsInitialized=true;$('entrySettingsHint').textContent='진입 방식과 보정값은 변경하면 자동 저장되며 다음 실행에도 유지됩니다.';
+}
+function saveEntrySettings(){
+  entrySettingsInitialized=true;showEntryMode();updateOverview();
+  const payload=readEntrySettings();
+  if(!payload){$('entrySettingsHint').textContent='저장하지 못했습니다. 보정값을 -250~250ms 범위의 정수로 입력해 주세요.';message($('entrySettingsHint').textContent);return Promise.resolve(null);}
+  $('entrySettingsHint').textContent='진입 설정 저장 중…';
+  // Serialize changes so an earlier response cannot overwrite the latest input.
+  entrySettingsSave=entrySettingsSave.then(async()=>{
+    const result=await run('entrySettings',payload);
+    if($('entryStrategy').value===payload.entryStrategy&&$('entryOffsetMs').value.trim()!==''&&Number($('entryOffsetMs').value)===payload.entryOffsetMs)$('entrySettingsHint').textContent=result?'저장됨 · 다음 실행에도 이 진입 방식과 보정값을 사용합니다.':'저장하지 못했습니다. 값을 확인한 뒤 다시 변경해 주세요.';
+    return result;
+  });
+  return entrySettingsSave;
 }
 function currentPreflightFingerprint(){
   return JSON.stringify({preferences:readPrefs(),inspectionOnly:$('inspectionOnly').checked,connected:browserConnected,target:currentTargetId,url:currentTargetUrl,game:$('game').value,openAt:$('openAt').value,strategy:$('entryStrategy').value,offset:$('entryOffsetMs').value});
@@ -276,7 +302,7 @@ function showLastRun(record){
     const trigger={'server-clock':'서버 시각 예약','activation':'사이트 활성화 감지'}[entry.trigger]||'없음';
     const outcome=clockOutcomeLabel(entry.clockOutcome);
     const count=n=>Number.isInteger(n)&&n>=0?n:0;
-    const lines=['진입 방식: '+(entry.strategy==='current-seat'?'열린 좌석 화면에서 시작 · 새 진입 요청 없음':entry.strategy==='clock'?'서버 시각 + 활성화 감지':'사이트 활성화 감지'),'진입 실행 계기: '+trigger,'서버 시각 예약: '+outcome];
+    const lines=['진입 방식: '+(entry.strategy==='current-seat'?'열린 좌석 화면에서 시작 · 새 진입 요청 없음':entry.strategy==='clock'?'예약 시각 API 진입':'사이트 활성화 감지'),'진입 실행 계기: '+trigger,'서버 시각 예약: '+outcome];
     if(entry.startPage)lines.push('시작 위치: '+({listing:'경기 목록',gate:'예매 준비 화면',seat:'좌석 화면'}[entry.startPage]||'미확인'));
     if(entry.listingPhase)lines.push('목록 진입: '+({armed:'활성화 대기',clicked:'함수 실행 확인',blocked:'중단',stopped:'중지',timeout:'시간 초과','transition-unconfirmed':'화면 이동 확인 · 함수 결과 미수신'}[entry.listingPhase]||'미확인'));
     if(entry.clockReason)lines.push(String(entry.clockReason));
@@ -296,7 +322,7 @@ async function run(action,payload){
 }
 async function exclusive(action,payload){
   if(running||localBusy||captchaBusy()||manualCaptchaBusy()){message('진행 중인 작업이 끝나거나 중지된 뒤 실행해 주세요.');return null;}
-  localBusy++;lockControls();try{return await run(action,payload);}finally{localBusy--;lockControls();}
+  localBusy++;lockControls();try{if(action==='start')await entrySettingsSave;return await run(action,payload);}finally{localBusy--;lockControls();}
 }
 async function runCaptcha(action){
   if(running||localBusy||captchaBusy()||manualCaptchaBusy()){message('진행 중인 작업이 끝나거나 중지된 뒤 보안문자를 테스트해 주세요.');return;}
@@ -360,6 +386,7 @@ window.helper.onState(state=>{
   }
   const wasRunning=running;running=Boolean(state.running);currentEntry=state.entry||null;message(state.message);
   if(state.desktop&&typeof state.desktop.alwaysOnTop==='boolean')$('alwaysOnTop').checked=state.desktop.alwaysOnTop;
+  restoreEntrySettings(state.desktop);
   if(running&&!wasRunning)showStep('run');
   if(running&&/보안문자|보안 코드/.test(state.runStatus||''))$('securityDetails').open=true;
   $('quickStop').hidden=true;
@@ -399,7 +426,9 @@ function showOpening(g,{fill=true}={}){
 $('game').onchange=()=>showOpening(gameRows.find(g=>g.key===$('game').value));
 $('restoreOpening').onclick=async()=>{if(targetIsGate()){const r=await exclusive('gateOpening');if(r?.opening)showOpening(r.opening);}else showOpening(gameRows.find(g=>g.key===$('game').value));};
 $('clock').onclick=()=>exclusive('clock');
-$('entryStrategy').onchange=showEntryMode;
+$('entryStrategy').onchange=saveEntrySettings;
+$('entryOffsetMs').oninput=()=>{entrySettingsInitialized=true;readEntrySettings();$('entrySettingsHint').textContent='변경 중 · 입력을 마치면 자동 저장됩니다.';updateOverview();};
+$('entryOffsetMs').onchange=saveEntrySettings;
 $('includeRestricted').onchange=updateOverview;$('fallbackAnywhere').onchange=updateOverview;$('selectionMethod').onchange=updateOverview;
 $('inspectionOnly').onchange=()=>{if($('inspectionOnly').checked)$('stopAfterCaptcha').checked=false;updateOverview();};
 $('stopAfterCaptcha').onchange=()=>{if($('stopAfterCaptcha').checked){$('inspectionOnly').checked=false;$('manualCaptchaAssist').checked=false;$('autoCaptcha').checked=true;}updateOverview();};
@@ -408,7 +437,7 @@ $('openLogs').onclick=()=>run('openLogs');
 $('recordObservation').onclick=()=>exclusive('recordObservation');
 $('panel-run').addEventListener('input',updateOverview);
 $('preflight').onclick=async()=>{const result=await exclusive('preflight',{preferences:readPrefs(),inspectionOnly:$('inspectionOnly').checked});if(result){const value=result.preflight||result;if(Array.isArray(value.checks)){lastPreflightState=JSON.stringify(value);displayPreflight(value);}}};
-$('start').onclick=async()=>{if(!$('game').value&&!targetIsGate()&&!targetIsSeat()){message('대상 경기를 선택하거나 열린 예매 준비·좌석 화면을 지정해 주세요.');showStep('page');return;}const value=$('openAt').value;await exclusive('start',{key:targetIsSeat()?'':$('game').value,openAt:!targetIsSeat()&&value?Date.parse(value+'+09:00'):null,entryStrategy:$('entryStrategy').value,entryOffsetMs:Number($('entryOffsetMs').value),inspectionOnly:$('inspectionOnly').checked,preferences:readPrefs()});};
+$('start').onclick=async()=>{if(!$('game').value&&!targetIsGate()&&!targetIsSeat()){message('대상 경기를 선택하거나 열린 예매 준비·좌석 화면을 지정해 주세요.');showStep('page');return;}const entry=readEntrySettings();if(!entry){message('진입 시각 보정은 -250~250ms 범위의 정수로 입력해 주세요.');return;}const value=$('openAt').value;await exclusive('start',{key:targetIsSeat()?'':$('game').value,openAt:!targetIsSeat()&&value?Date.parse(value+'+09:00'):null,...entry,inspectionOnly:$('inspectionOnly').checked,preferences:readPrefs()});};
 $('stop').onclick=()=>run('stop');
 $('quickStop').onclick=()=>run('stop');
 $('submitCode').onclick=async()=>{const code=$('securityCode').value;$('securityCode').value='';await run('code',code);};

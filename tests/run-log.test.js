@@ -24,6 +24,12 @@ test('logs allowlist evidence and redact credential-shaped text without storing 
   assert.ok(!JSON.stringify(result).includes('hidden'));assert.ok(!JSON.stringify(result).includes('ABCDEF'));assert.ok(!JSON.stringify(result).includes('private'));assert.deepEqual(result.gradeConflicts,[{code:'1',names:['A','B']}]);
 });
 
+test('scheduled request timing keeps the signed deadline delta without request payloads',()=>{
+  assert.deepEqual(safeDetail({requestDeadlineDelayMs:-0.25,requestDelayMs:1.5,signature:'private',secureData:'private'}),{requestDelayMs:1.5,requestDeadlineDelayMs:-0.25});
+  assert.deepEqual(safeDetail({requestDeadlineDelayMs:0}),{requestDeadlineDelayMs:0});
+  for(const value of [Infinity,NaN,'2.5'])assert.equal('requestDeadlineDelayMs' in safeDetail({requestDeadlineDelayMs:value}),false);
+});
+
 test('seat diagnostics retain rejection counts and bounded grade reasons but exclude arbitrary payloads',()=>{
   const result=safeDetail({cycle:3,planCount:0,reason:'inventory-empty',missingRowCount:2,grades:[{name:'일반석',code:'1',count:0,eligible:false,reasons:['inventory-empty'],body:'private'}, {name:'unknown',count:'token=hidden',reasons:['token=hidden']}],preferences:{autoNotice:true,fallbackAnywhere:true,excludeRestricted:false,priority:'front'},body:'private'});
   assert.equal(result.grades[0].count,0);assert.equal(result.grades[1].count,null);

@@ -13,7 +13,7 @@ const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypt
   if(!noClick.passed||noClick.version!==pkg.version||!noClick.minimized||noClick.domInputEvents!==0||noClick.captchaVerifications!==2||noClick.seatStatusRequests!==1||noClick.standardPriceName!=='일반가'||noClick.destination!=='/payment')throw Error('일반 가격을 포함한 최소화·클릭 없는 전체 흐름 검증이 필요합니다.');
   report.noClickFlow=noClick;
   const entry=JSON.parse(fs.readFileSync(path.join(root,`work/entry-http-smoke-v${version}.json`),'utf8'));
-  if(!entry.passed||entry.checks.length<6)throw Error('진입 지연·중복·중지 검증이 필요합니다.');
+  if(!entry.passed||entry.checks.length<9||!entry.checks.some(c=>c.name.includes('countdown UI remains disabled')&&c.calls===1)||!entry.checks.some(c=>c.name.includes('early request waits')&&c.calls===1&&c.functions===0)||!entry.checks.some(c=>c.name.includes('waiting for the deadline')&&c.calls===0))throw Error('비활성 버튼에서 정시 API 호출·조기 전송 차단·중복·중지 검증이 필요합니다.');
   report.entry=entry;
   const listing=JSON.parse(fs.readFileSync(path.join(root,`work/listing-entry-smoke-v${version}.json`),'utf8'));
   if(!listing.passed||listing.checks.length<9)throw Error('목록 활성화·중지·예약 시각 검증이 필요합니다.');

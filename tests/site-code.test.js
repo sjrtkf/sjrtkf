@@ -9,7 +9,7 @@ function fixture(){
   vm.runInContext('const site='+invokeSiteFunction.toString()+';globalThis.runtime='+codeRuntime.toString(),context);
   const element=new Input();Object.assign(element,{isConnected:true,disabled:false,getAttribute:()=>null,click(){eventCalls++;throw Error('No DOM click');},dispatchEvent(){eventCalls++;throw Error('No event');},__reactProps$fixture:{onClick:()=>{callbackCalls++;},onChange:e=>{callbackCalls++;assert.equal(e.target.value,'ABCDEF');}}});
   const meta={connection:'first',epoch:0,expiresAt:10000};
-  const run=(action='invoke',arg,options={})=>context.runtime(action,arg,{...meta,...options},vm.runInContext('site',context),siteInvoke=>({invoke:()=>{siteInvoke(element);return {ok:true};},change:()=>{siteInvoke(element,'change','ABCDEF');return {ok:true};},watch:()=>{context.later=()=>siteInvoke(element);return true;}}));
+  const run=(action='invoke',arg,options={})=>context.runtime(action,arg,{...meta,...options},vm.runInContext('site',context),siteInvoke=>({invoke:()=>{siteInvoke(element);return {ok:true};},scheduled:()=>siteInvoke(element,'scheduled-entry'),watchScheduled:()=>{context.later=()=>siteInvoke(element,'scheduled-entry');return true;},change:()=>{siteInvoke(element,'change','ABCDEF');return {ok:true};},watch:()=>{context.later=()=>siteInvoke(element);return true;}}));
   return {context,element,run,meta,counts:()=>({callbacks:callbackCalls,events:eventCalls}),advance:n=>{now+=n;},timer:()=>timer()};
 }
 test('registered site functions run directly with zero DOM events',()=>{const f=fixture();f.run();f.run('change');assert.deepEqual(f.counts(),{callbacks:2,events:0});});
@@ -64,4 +64,13 @@ test('late rejected site functions from a previous run cannot stop the next run'
     assert.equal(f.context.window.__ticketSiteCode.stopped,false);
     assert.doesNotThrow(()=>f.context.later());
   }
+});
+
+test('scheduled original entry calls retain the runtime lease and failure latch',()=>{
+  const f=fixture();f.element.disabled=true;
+  f.context.resolveGateEntry=element=>({invoke:element.__reactProps$fixture.onClick});
+  f.run('scheduled');assert.equal(f.counts().callbacks,1);
+  f.run('watchScheduled');f.advance(5001);assert.throws(()=>f.context.later(),/STOPPED/);assert.equal(f.counts().callbacks,1);
+  const failed=fixture();failed.context.resolveGateEntry=()=>{throw Error('SITE_ENTRY_FUNCTION_UNSUPPORTED');};
+  assert.throws(()=>failed.run('scheduled'),/UNSUPPORTED/);assert.throws(()=>failed.run(),/UNSUPPORTED/);assert.equal(failed.counts().callbacks,0);
 });

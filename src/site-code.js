@@ -3,6 +3,10 @@
 // never dispatch browser input events, evaluate attributes, or guess a parent
 // handler. The caller identifies and revalidates the exact supported control.
 function invokeSiteFunction(element,kind='activate',value){
+  if(kind==='scheduled-entry'){
+    if(typeof resolveGateEntry!=='function')throw Error('SITE_ENTRY_FUNCTION_UNAVAILABLE');
+    return resolveGateEntry(element).invoke();
+  }
   const gateEntry=kind==='entry'&&location.origin==='https://tickets.interpark.com'&&/^\/gates\/ticket\/\d{8}\/?$/.test(location.pathname)&&/^(?:예매하기|남은시간\s*\d{1,2}:\d{2})$/.test(element?.textContent?.trim()||'');
   if(!element||element.isConnected===false||(!gateEntry&&(element.disabled||element.getAttribute?.('aria-disabled')==='true')))throw Error('SITE_CONTROL_CHANGED');
   if(!['activate','change'].includes(kind)&&!gateEntry)throw Error('SITE_FUNCTION_UNSUPPORTED');
@@ -28,7 +32,7 @@ function invokeSiteFunction(element,kind='activate',value){
 }
 
 const CODE_ACTIONS=new Set([
-  'entry.prepareEntry','entry.armListing','entry.setListingClock','entry.listingState','entry.stopListing','entry.gateStatus','entry.armGate','entry.setGateClock','entry.noteGateRequest',
+  'entry.prepareEntry','entry.prepareScheduledGate','entry.armListing','entry.setListingClock','entry.listingState','entry.stopListing','entry.gateStatus','entry.armGate','entry.setGateClock','entry.noteGateRequest',
   'live.liveAction','flow.scene','flow.clickKnown','flow.enterCode','flow.deselect','flow.dismissConflict','flow.dismissEmptySelection',
   'pricePage.adultPriceStep','pricePage.proceedBooking','pricePage.returnToSeats',
   'captcha.captchaSnapshot','captcha.captchaSubmit','captcha.captchaStatus','captcha.captchaCancel','captcha.captchaRefresh',

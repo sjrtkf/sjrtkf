@@ -6,7 +6,7 @@ function fixture(){
   const button={disabled:true,textContent:'09/18 11:00 예매하기',getAttribute(){return null;},getBoundingClientRect(){return {width:100,height:40};},click(){clicks++;}};
   const main={textContent:'예매 준비가 완료됐어요',querySelectorAll(){return [button];}};
   const document={body:{},querySelector(){return main;},querySelectorAll(){return [];}};
-  const context=vm.createContext({siteInvoke:(e,kind,value)=>{if(kind==='change'){e.value=value;e.siteChange?.(value);return;}return e.click();},document,window:{},location:{origin:'https://tickets.interpark.com',pathname:'/gates/ticket/26005452'},performance:{now:()=>0},Date,getComputedStyle:()=>({display:'block',visibility:'visible'}),setTimeout:()=>1,clearTimeout(){},MutationObserver:class{constructor(fn){callback=fn;}observe(){}disconnect(){}}});
+  const context=vm.createContext({siteInvoke:(e,kind,value)=>{if(kind==='change'){e.value=value;e.siteChange?.(value);return;}return e.click();},document,window:{},URL,URLSearchParams,location:{origin:'https://tickets.interpark.com',pathname:'/gates/ticket/26005452'},performance:{now:()=>0},Date,getComputedStyle:()=>({display:'block',visibility:'visible'}),setTimeout:()=>1,clearTimeout(){},MutationObserver:class{constructor(fn){callback=fn;}observe(){}disconnect(){}}});
   return {context,button,main,document,tick:()=>callback(),clicks:()=>clicks,run:(fn,arg)=>vm.runInContext(`(${fn.toString()})(${JSON.stringify(arg)??''})`,context)};
 }
 test('게이트는 활성화 전에는 클릭하지 않고 실제 활성화 순간 한 번만 클릭한다',()=>{
@@ -46,4 +46,15 @@ test('명시적 새 실행은 이전 카드 클릭 상태를 재사용하지 않
   f.run(entry.prepareEntry,{key:'9월 23일 | 두산 vs KIA',runId:'r1'});f.run(entry.prepareEntry,{key:'9월 23일 | 두산 vs KIA',runId:'r2'});assert.equal(f.clicks(),2);
   f.document.querySelectorAll=()=>[];f.button.disabled=true;f.run(entry.armGate,{goodsCode:'26005452',runId:'r1'});f.context.window.__bearsGate.stop();
   const status=f.run(entry.armGate,{goodsCode:'26005452',runId:'r2'});assert.equal(status.phase,'armed');assert.equal(status.runId,'r2');assert.equal(status.observedDisabled,true);
+});
+
+test('예약 모드는 일치하는 비활성 목록 카드에서 미리 공개 준비 화면으로 이동한다',()=>{
+  const f=fixture(),urls=[];f.context.location={origin:'https://nol.yanolja.com',pathname:'/ticket/genre/sports/postseason',assign:url=>urls.push(url)};
+  f.button.parentElement={querySelector:()=>({textContent:'9월 23일'}),querySelectorAll:()=>[{alt:'두산'},{alt:'KIA'}]};f.document.querySelectorAll=()=>[f.button];
+  const args={key:'9월 23일 | 두산 vs KIA',goodsCode:'26005452',placeCode:'26001228'},result=f.run(entry.prepareScheduledGate,args);
+  assert.equal(result.dispatched,true);const bridge=new URL(urls[0]),gate=new URL(bridge.searchParams.get('redirectUrl'));
+  assert.equal(bridge.origin,'https://sso.yanolja.com');assert.equal(bridge.pathname,'/sso/v1/bridge/token');assert.equal(bridge.searchParams.get('serviceDomainCode'),'NOL_TICKET');
+  assert.equal(gate.href,'https://tickets.interpark.com/gates/partner?bc=61776&gc=26005452&pc=26001228&cc=Gates');assert.equal(f.button.disabled,true);assert.equal(f.clicks(),0);
+  assert.throws(()=>f.run(entry.prepareScheduledGate,{...args,key:'other'}),/SITE_ENTRY_CONTROL_CHANGED/);assert.equal(urls.length,1);
+  f.document.querySelectorAll=()=>[f.button,f.button];assert.throws(()=>f.run(entry.prepareScheduledGate,args),/AMBIGUOUS/);
 });

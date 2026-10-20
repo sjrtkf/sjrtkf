@@ -7,6 +7,7 @@ const {readBookingContext}=require('../src/booking-context');
 const {resolveGradeNames}=require('../src/grade-names');
 const httpBooking=require('../src/http-booking');
 const {invokeSiteFunction,CODE_ACTIONS}=require('../src/site-code');
+const {resolveGateEntry}=require('../src/entry-request');
 const {codeRuntime}=require('../src/code-runtime');
 'use strict';
 // Build-time source copying produces static MV3 code. The extension never evaluates
@@ -17,13 +18,13 @@ const observation=require('../src/booking-observation');
 const {pageActions}=require('../src/chrome-target');
 const {ACTIONS}=require('../src/browser-bridge');
 const metadata=require('../src/metadata'),seatNetwork=require('../src/seat-network'),entryNetwork=require('../src/entry-network');
-const lines=["'use strict';",'globalThis.BaseballActions=(()=>{',`const siteInvoke=${invokeSiteFunction.toString()};`,`const readBookingContext=${readBookingContext.toString()};`,`const resolveGradeNames=${resolveGradeNames.toString()};`,`const parseSeatLabels=${metadata.parseSeatLabels.toString()};`,`const planStandardPrices=${httpBooking.planStandardPrices.toString()};`,`const priceState=${pricePage.priceState.toString()};`,'return Object.freeze({'];
+const lines=["'use strict';",'globalThis.BaseballActions=(()=>{',`const resolveGateEntry=${resolveGateEntry.toString()};`,`const siteInvoke=${invokeSiteFunction.toString()};`,`const readBookingContext=${readBookingContext.toString()};`,`const resolveGradeNames=${resolveGradeNames.toString()};`,`const parseSeatLabels=${metadata.parseSeatLabels.toString()};`,`const planStandardPrices=${httpBooking.planStandardPrices.toString()};`,`const priceState=${pricePage.priceState.toString()};`,'return Object.freeze({'];
 for(const [group,functions] of Object.entries({entry,live,flow,captcha,manualCaptcha,observation,directApi,publicGame,seatDetails,pricePage,httpBooking:{httpBookingAction:httpBooking.httpBookingAction},page:pageActions}))for(const [name,fn] of Object.entries(functions))if(ACTIONS.has(`${group}.${name}`))lines.push(`${JSON.stringify(`${group}.${name}`)}:${fn.toString()},`);
 lines.push('});})();');
 fs.writeFileSync(path.join(__dirname,'actions.js'),lines.join('\n')+'\n');
 fs.writeFileSync(path.join(__dirname,'http-navigation.js'),'globalThis.BaseballHttpNavigate='+httpBooking.httpBookingNavigate.toString()+';\n');
 const codeLines=["'use strict';",`globalThis.BaseballCodeActions=new Set(${JSON.stringify([...CODE_ACTIONS])});`,
-  'globalThis.BaseballCodeDispatch=async function(action,arg,meta){',`const invokeSiteFunction=${invokeSiteFunction.toString()};`,`const runtime=${codeRuntime.toString()};`,
+  'globalThis.BaseballCodeDispatch=async function(action,arg,meta){',`const resolveGateEntry=${resolveGateEntry.toString()};`,`const invokeSiteFunction=${invokeSiteFunction.toString()};`,`const runtime=${codeRuntime.toString()};`,
   `const classifyEntryResponse=${classifyEntryResponse.toString()};`,`const createEntryHttp=${createEntryHttp.toString()};`,'const makeActions=siteInvoke=>{',`const priceState=${pricePage.priceState.toString()};`,'return {'];
 for(const [group,functions] of Object.entries({entry,live,flow,captcha,manualCaptcha,pricePage,page:pageActions}))for(const [name,fn] of Object.entries(functions))if(CODE_ACTIONS.has(`${group}.${name}`))codeLines.push(`${JSON.stringify(`${group}.${name}`)}:${fn.toString()},`);
 codeLines.push('};};try{return {ok:true,value:(await runtime(action,arg,meta,invokeSiteFunction,makeActions))??null};}catch(error){return {ok:false,code:/^SITE_[A-Z_]+$/.test(error?.message||"")?error.message:"SITE_ACTION_FAILED"};}};');

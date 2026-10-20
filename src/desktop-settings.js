@@ -17,8 +17,14 @@ function windowBounds(value){
   if(value.width<320||value.height<400||value.width>4096||value.height>8192)return null;
   return Object.fromEntries(['x','y','width','height'].map(k=>[k,Math.round(value[k])]));
 }
+function entrySettings(input={}, {strict=false}={}){
+  const strategy=input?.entryStrategy,offset=input?.entryOffsetMs;
+  if(strict&&strategy!==undefined&&!['site','clock'].includes(strategy))throw Error('진입 방식을 다시 선택해 주세요.');
+  if(strict&&offset!==undefined&&(!Number.isInteger(offset)||offset < -250||offset > 250))throw Error('진입 시각 보정은 -250~250ms 범위의 정수로 입력해 주세요.');
+  return {entryStrategy:strategy==='clock'?'clock':'site',entryOffsetMs:Number.isInteger(offset)&&offset>=-250&&offset<=250?offset:0};
+}
 function cleanSettings(input={}){
-  return {pageUrl:entryUrl(input.pageUrl)||POSTSEASON,favoriteTeam:'삼성 라이온즈',alwaysOnTop:input.alwaysOnTop!==false,...(windowBounds(input.windowBounds)?{windowBounds:windowBounds(input.windowBounds)}:{})};
+  return {pageUrl:entryUrl(input.pageUrl)||POSTSEASON,favoriteTeam:'삼성 라이온즈',alwaysOnTop:input.alwaysOnTop!==false,...entrySettings(input),...(windowBounds(input.windowBounds)?{windowBounds:windowBounds(input.windowBounds)}:{})};
 }
 function readJson(file,limit=256*1024){
   const stat=fs.statSync(file);if(!stat.isFile()||stat.size>limit)throw Error('설정 파일 크기 또는 형식을 확인해 주세요.');
@@ -61,4 +67,4 @@ function bridgeFailure(error){
     ?'다른 도우미가 연결을 사용 중입니다. 이전 버전 도우미를 종료한 뒤 이 프로그램을 다시 실행해 주세요.'
     :'Chrome 연결 준비에 실패했습니다. 프로그램을 다시 실행해 주세요. '+String(error?.message||'').slice(0,180);
 }
-module.exports={POSTSEASON,entryUrl,cleanSettings,migrateSettings,visibleBounds,revealWindow,bridgeFailure};
+module.exports={POSTSEASON,entryUrl,entrySettings,cleanSettings,migrateSettings,visibleBounds,revealWindow,bridgeFailure};

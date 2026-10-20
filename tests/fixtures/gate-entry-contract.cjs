@@ -1,0 +1,16 @@
+'use strict';
+// The two public function bodies observed on 2026-10-20, retained verbatim so
+// contract matching is tested against real compiled code. All closure state
+// below is local synthetic state; there is no network or browser session.
+module.exports=function fixture(options={}){
+  const requests=[],redirects=[],changes=[];
+  const t=index=>({230:'getState',221:'isWaitingEntranceLoading',204:'bizCode',206:'language',234:'replace',191:'ticket',224:'message',211:'error'})[index];
+  const a=()=>{options.onCall?.();return !!options.alertOpen;},ku={getState:()=>({isAccessDenied:!!options.denied})},yn={getState:()=>({isWaitingEntranceLoading:!!options.busy})};
+  const u=value=>changes.push(value),ru={getState:()=>({currentStep:'booking'})},$={startTransition:fn=>fn()},s=()=>{},o=()=>{};
+  const kt={getState:()=>({isSpecialGroupPrice:false,isPreSaleAuthBizCode:false,isHyundaiAuthBizCode:false})};
+  const n='PUBLIC_TEST',p=false,r=undefined,c={playDate:'20261020',playSeq:'001'},B=()=>null,sj='pbc',h=async()=>{},pe=()=>({});
+  const l=async request=>{requests.push(request);return options.request?await options.request(request):'/waiting/test';},location={replace:path=>{redirects.push(path);options.onRedirect?.(path);}},v=()=>{},i=async()=>{},f=value=>value,d={language:'ko'};
+  const callback=async(e={})=>{const I=t;try{if(a())return;const{isAccessDenied:t}=ku[I(230)]();if(t)return;if(yn[I(230)]()[I(221)])return;u(!0);const{currentStep:i}=ru[I(230)]();"init"===i&&$.startTransition((()=>s(!0)));const{isSpecialGroupPrice:o,isPreSaleAuthBizCode:f,isHyundaiAuthBizCode:v}=kt[I(230)]();let g=e[I(204)]||n;if(p){if(o&&(g=du(d[I(206)],g)),f){const{certResult:t}=tn[I(230)](),{activePreSales:e}=hn.getState(),n=Bt(e||[],t),r=Dt(t,n);m=g,g=(y=r)&&y[lu(316)]?y.authBizCode??m:m}v&&(g=P[lu(391)])}const b=B(sj);b&&(g=await h(g,b));const{playDate:w,playSeq:S}=c||{},k={...e,bizCode:g,passCode:r,playDate:w,playSeq:S,...pe()},E=await l(k);location[I(234)](E)}catch(g){v(g,I(191)),g instanceof Error?await i(f(g[I(224)]||"오류가 발생했습니다.")):await i(f(I(211))),u(!1),$.startTransition((()=>{s(!1),o(!0)}))}var m,y};
+  const owner=({global:t=!0})=>{const e=VL,n=ku((t=>t[e(284)])),r=ku((t=>t[e(275)])),i=kt((t=>t[e(274)]||t[e(277)])),a=kt((t=>t.isHPointGoods)),s=kt((t=>t.isRandomCertCoupon)),o=kt((t=>t.isRandomCertRcdGated)),u=kt((t=>t.isRandomCertHideBooking)),c=vj((t=>t[e(265)])),p=o&&!!c&&u,{enterGlobalWaitingPage:d,enterTicketWaitingPage:l}=pj(),{logUserInteraction:h}=ji(),{logOrderReadyClick:v}=qP(t),I=yn((t=>t[e(287)])),m=yn((t=>t[e(267)])),y=es((async()=>{const i=e;try{if(r||m)return;h({category:"게이트페이지",action:i(271),params:{action_type:i(269),section:i(280),entry_name:n,entry_type:i(288)}}),v(),t?await d():await l()}finally{await new Promise((t=>{setTimeout(t,1e3)}))}})),g=es((async()=>{const i=e;r||m||(h({category:i(272),action:i(271),params:{action_type:i(269),section:"로터리 티켓 신청",entry_name:n,entry_type:i(288)}}),t?await d():await l())}));return I?null:f.jsxs(f.Fragment,{children:[a&&f.jsx(jL,{}),n&&!p&&f.jsx(oe,{variant:e(289),disabled:r,"aria-disabled":m||void 0,"aria-busy":m||void 0,className:m?KL[e(276)]:void 0,onClick:i?g:y,children:m?f.jsx(e(279),{className:KL.spinner,"aria-label":n}):n},e(273)),s&&f.jsx(GL,{global:t})]})};
+  return {callback,owner,requests,redirects,changes};
+};

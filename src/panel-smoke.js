@@ -36,7 +36,7 @@ module.exports=async function panelSmoke({app,win,bridge,command}){
     removedControls:[...document.querySelectorAll('#venueProfile,#venueName,#createVenue,#venueReference,#currentCatalog,#readAreas,#areaChoice,#blockChoice,#catalogSeats,#recommend,#choose,#complete,#scan,#filter,#seats')].map(node=>node.id),
     saveLabel:document.getElementById('save').textContent,saveHint:document.getElementById('saveHint').textContent,
     quantity:document.getElementById('quantity').value,areas:document.getElementById('areas').value,
-    entryOffset:document.getElementById('entryOffsetMs').value,inspectionOnly:document.getElementById('inspectionOnly').checked,
+    entryOffset:document.getElementById('entryOffsetMs').value,entryStrategy:document.getElementById('entryStrategy').value,entrySettingsHint:document.getElementById('entrySettingsHint').textContent,inspectionOnly:document.getElementById('inspectionOnly').checked,
     startLabel:document.getElementById('start').textContent,runMode:document.getElementById('runModeSummary').textContent,readinessText:document.getElementById('readiness').textContent,
     scope:document.getElementById('runScope').textContent,preflightSummary:document.getElementById('preflightSummary').textContent,preflightChecks:document.getElementById('preflightChecks').textContent,preflightCount:document.getElementById('preflightChecks').children.length,
     targetHint:document.getElementById('targetHint').textContent,entryMode:document.getElementById('entryMode').textContent,
@@ -167,6 +167,26 @@ module.exports=async function panelSmoke({app,win,bridge,command}){
     await evaluate("(async()=>{const result=await run('preferences',{quantity:2});showPrefs(result.preferences);})()");
     ui=await read();
     check('진입 시각 보정과 진입 확인 전용 모드는 사용자가 선택하기 전 기본값 유지',()=>{assert.equal(ui.entryOffset,'0');assert.equal(ui.inspectionOnly,false);});
+    await evaluate("(async()=>{document.getElementById('entryStrategy').value='clock';const first=document.getElementById('entryStrategy').onchange();document.getElementById('entryOffsetMs').value='-125';document.getElementById('entryOffsetMs').oninput();await document.getElementById('entryOffsetMs').onchange();await first;})()");
+    const entryFile=path.join(app.getPath('userData'),'settings.json');
+    ui=await read();
+    check('진입 방식·보정값 연속 변경은 마지막 입력을 자동 저장',()=>{
+      const saved=JSON.parse(fs.readFileSync(entryFile,'utf8'));
+      assert.equal(saved.entryStrategy,'clock');assert.equal(saved.entryOffsetMs,-125);assert.match(ui.entrySettingsHint,/저장됨/);
+      assert.match(ui.text,/예약 시각 API 진입/);assert.match(ui.entryMode,/버튼 활성화를 기다리지 않습니다/);assert.match(ui.entryMode,/활성화 대기로 전환하지 않고 중단/);
+      assert.doesNotMatch(ui.text,/예약 시각 \+ 활성화 확인|보정 시각이 되어도 사이트가 활성화되기 전/);
+    });
+    await new Promise(resolve=>{win.webContents.once('did-finish-load',resolve);win.webContents.reload();});
+    await evaluate("run('state')");ui=await read();
+    check('패널을 다시 열면 저장된 진입 방식과 보정값을 복원',()=>{assert.equal(ui.entryStrategy,'clock');assert.equal(ui.entryOffset,'-125');});
+    await evaluate("document.getElementById('entryOffsetMs').value='';document.getElementById('entryOffsetMs').oninput();");
+    ui=await publish(fixture({desktop:{alwaysOnTop:true,entryStrategy:'site',entryOffsetMs:0}}));
+    check('일반 상태 알림이 편집 중인 진입 설정을 덮어쓰지 않음',()=>{assert.equal(ui.entryStrategy,'clock');assert.equal(ui.entryOffset,'');});
+    await evaluate("document.getElementById('entryOffsetMs').onchange()");ui=await read();
+    check('잘못된 보정값은 기존 저장값을 보존하며 저장 실패를 표시',()=>{
+      assert.equal(JSON.parse(fs.readFileSync(entryFile,'utf8')).entryOffsetMs,-125);assert.equal(ui.entryOffset,'');assert.match(ui.entrySettingsHint,/저장하지 못했습니다/);
+    });
+    await evaluate("(async()=>{document.getElementById('entryStrategy').value='site';document.getElementById('entryOffsetMs').value='0';await document.getElementById('entryOffsetMs').onchange();})()");
     const connected=fixture({target:701,windows:[{id:701,title:'로컬 경기 목록',url:'https://nol.yanolja.com/ticket/genre/sports/bears'}],browserStatus:{connected:true,message:'로컬 연결 상태 검증',pairCode:null}});
     ui=await publish(connected);
     check('연결 상태 반영 · Chrome 동작 활성화 · 설치 안내 접기',()=>{

@@ -7,7 +7,7 @@ const GOODS='26005452',RUN='clock-run';
 
 function fixture(){
   let mono=0,wall=1789700000000,nextTimer=1,clicks=0,attributeWrites=0,disabled=true;
-  const timers=new Map(),observers=[];
+  const timers=new Map(),observers=[],invocations=[];
   const button={
     textContent:'남은시간 00:01',ariaDisabled:null,
     get disabled(){return disabled;},set disabled(value){attributeWrites++;disabled=value;},
@@ -18,7 +18,7 @@ function fixture(){
   const main={textContent:'예매 준비가 완료됐어요',querySelectorAll(){return [button];}};
   const document={body:{},hidden:false,modal:false,querySelector(){return main;},querySelectorAll(){return this.modal?[dialog]:[];}};
   class FakeDate extends Date{static now(){return wall;}}
-  const context=vm.createContext({siteInvoke:(e,kind,value)=>{if(kind==='change'){e.value=value;e.siteChange?.(value);return;}return e.click();},
+  const context=vm.createContext({resolveGateEntry:()=>({contract:'local-clock-fixture'}),siteInvoke:(e,kind,value)=>{invocations.push(kind);if(kind==='change'){e.value=value;e.siteChange?.(value);return;}e.click();if(kind==='scheduled-entry')return new Promise(()=>{});},
     window:{},document,location:{origin:'https://tickets.interpark.com',pathname:'/gates/ticket/'+GOODS},
     performance:{now:()=>mono,timeOrigin:1789700000000},Date:FakeDate,getComputedStyle:()=>({display:'block',visibility:'visible'}),
     setTimeout(fn,delay=0){const id=nextTimer++;timers.set(id,{fn,due:mono+Math.max(0,Number(delay)||0)});return id;},
@@ -41,7 +41,7 @@ function fixture(){
   function notify(){for(const observer of observers)if(observer.connected)observer.fn([],observer);}
   const config=overrides=>({runId:RUN,goodsCode:GOODS,documentId:context.window.__bearsGate?.status.documentId,source:'ticket-server',deadlineMono:100,validUntilMono:1000,uncertaintyMs:20,openAt:1789700000100,...overrides});
   return {
-    context,document,button,main,timers,observers,run,advance,activate,notify,config,
+    context,document,button,main,timers,observers,invocations,run,advance,activate,notify,config,
     arm:(options={})=>run(entry.armGate,{goodsCode:GOODS,runId:RUN,...options}),
     clock:(options={})=>run(entry.setGateClock,config(options)),
     clicks:()=>clicks,attributeWrites:()=>attributeWrites,now:()=>mono,
@@ -170,16 +170,36 @@ test('예약 진입은 활성화된 준비 버튼도 최근 서버 시각과 시
   f.advance(100);f.notify();assert.equal(f.clicks(),1);assert.equal(status.trigger,'server-clock');
 });
 
-test('예약 진입의 시각이 실행 전 또는 비활성 대기 중 만료되면 새 보정 전까지 활성화도 보류한다',()=>{
+test('예약 진입의 시각이 실행 전 또는 모달 대기 중 만료되면 새 보정 전까지 실행을 보류한다',()=>{
   for(const deadlineFired of [false,true]){
     const f=fixture(),status=f.arm({httpRetry:true});f.clock({validUntilMono:150});
-    if(deadlineFired)f.advance(100);
-    f.elapseWithoutTasks(200);f.advance(200);f.activate();f.notify();
+    if(deadlineFired){f.document.modal=true;f.advance(100);}
+    f.elapseWithoutTasks(200);f.advance(200);f.activate();f.document.modal=false;f.notify();
     assert.equal(status.clock.outcome,'stale');assert.equal(status.phase,'armed');assert.equal(f.clicks(),0);
     assert.equal(f.clock({deadlineMono:300,validUntilMono:1000}),true);
     f.advance(299);f.notify();assert.equal(f.clicks(),0);
     f.advance(300);assert.equal(f.clicks(),1);assert.equal(status.clickedMono,300);
   }
+});
+
+test('정시 API 모드는 비활성 카운트다운 UI를 바꾸지 않고 원래 진입 함수를 기한에 한 번 호출한다',()=>{
+  const f=fixture(),status=f.arm({httpRetry:true});f.clock();f.advance(99.99);
+  assert.equal(f.clicks(),0);assert.equal(status.entryReady,true);
+  f.advance(100);f.notify();f.advance(2000);
+  assert.equal(f.clicks(),1);assert.deepEqual(f.invocations,['scheduled-entry']);assert.equal(f.button.disabled,true);assert.equal(f.attributeWrites(),0);
+  assert.equal(status.trigger,'server-clock');assert.equal(status.clickedMono,100);assert.equal(status.invokeDelayMs,0);
+});
+
+test('정시 API 모드는 알려지지 않은 원래 함수라면 비활성 버튼 핸들러로 대체하지 않는다',()=>{
+  const f=fixture();f.context.resolveGateEntry=()=>{throw Error('SITE_ENTRY_FUNCTION_UNSUPPORTED');};
+  const status=f.arm({httpRetry:true});f.clock();f.advance(100);f.activate();f.notify();
+  assert.equal(f.clicks(),0);assert.equal(status.phase,'blocked');assert.match(status.reason,/SITE_ENTRY_FUNCTION_UNSUPPORTED/);
+});
+
+test('정시 함수가 실제 요청 없이 반환하면 반복 호출하지 않고 명시적으로 중지한다',async()=>{
+  const f=fixture();let calls=0;f.context.siteInvoke=()=>{calls++;};
+  const status=f.arm({httpRetry:true});f.clock();f.advance(100);await new Promise(resolve=>setImmediate(resolve));
+  f.advance(3000);f.notify();assert.equal(calls,1);assert.equal(status.phase,'blocked');assert.match(status.reason,/API 요청/);
 });
 
 test('준비 화면의 재보정 이전 지연 타이머는 새 시각을 발동 처리하거나 덮어쓸 수 없다',()=>{
