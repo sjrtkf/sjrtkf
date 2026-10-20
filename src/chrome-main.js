@@ -331,7 +331,7 @@ function onBrowserEvent(event){
 }
 function seedDemo(id){const store=metaStores.get(id);if(store)for(const s of metadata.parseMetadata(require('./demo-data')))store.set(s.id,s);}
 function measured(wc,action,task){const run=runs.current;return run?.windowIds.has(wc.id)?run.metrics.measure(action,task):task();}
-const js=(wc,fn,arg)=>{assertAvailable(wc);const name=typeof fn==='string'?fn:fn?.name;const action=name==='scene'?'screen-read':name==='liveRead'?'seat-read':name==='clickKnown'?'screen-action':name==='stopWatchers'?'cleanup':name==='readDetails'?'seat-details':'page-command';return Promise.resolve(measured(wc,action,()=>wc.invoke(fn,arg))).then(result=>{if(runs.current?.windowIds.has(wc.id)&&['prepareEntry','armGate','liveAction','clickKnown','dismissConflict','dismissEmptySelection','captchaSubmit','captchaRefresh'].includes(name))runLog.event('code-action',{action:name,result:result?.status||result?.phase||'returned'});return result;}).catch(error=>{error.message=siteCodeMessage(error.message);if(runs.current?.windowIds.has(wc.id))runLog.event('command-error',{action:name,message:error.message});throw error;});};
+const js=(wc,fn,arg)=>{assertAvailable(wc);const name=typeof fn==='string'?fn:fn?.name;const action=name==='scene'?'screen-read':name==='liveRead'?'seat-read':name==='clickKnown'?'screen-action':name==='stopWatchers'?'cleanup':name==='readDetails'?'seat-details':'page-command';return Promise.resolve(measured(wc,action,()=>wc.invoke(fn,arg))).then(result=>{if(runs.current?.windowIds.has(wc.id)&&['prepareEntry','armGate','liveAction','clickKnown','dismissConflict','dismissEmptySelection','captchaSubmit','captchaRefresh'].includes(name))runLog.event('code-action',{action:name,result:result?.status||result?.phase||'returned'});return result;}).catch(error=>{error.message=siteCodeMessage(error.message);if(runs.current?.windowIds.has(wc.id))runLog.event(runs.current.kind==='auto'&&!runs.current.seatScope&&['gateStatus','gateState','pageClock','listingState','bookingIdentity','scene'].includes(name)&&entryReadFailure(error.message,{documentId:wc.documentId},wc.id)?'entry-read-interrupted':name==='stopWatchers'&&runs.current.signal.aborted?'cleanup-interrupted':'command-error',{action:name,message:error.message});throw error;});};
 function savePreferences(input){
   preflightResult=null;
   const normalized=normalizePreferences(input);
@@ -380,7 +380,7 @@ function entryReadFailure(message,original,tabId){
     'A listener indicated an asynchronous response by returning true, but the message channel closed before a response was received',
     '사이트 코드 실행 결과를 확인하지 못했습니다. 같은 동작을 반복하지 않습니다.'].includes(message))return 'connection';
   const missing=message.match(/^No document with id ([A-Fa-f0-9-]+) in tab with id (\d+)\.?$/);
-  return message==='페이지가 바뀌어 이전 화면의 동작을 취소했습니다.'||message==='지원하는 NOL 예매 탭이 아닙니다.'||
+  return message==='Frame with ID 0 was removed.'||message==='페이지가 바뀌어 이전 화면의 동작을 취소했습니다.'||message==='지원하는 NOL 예매 탭이 아닙니다.'||
     missing&&missing[1]===original.documentId&&Number(missing[2])===tabId?'navigation':null;
 }
 async function readEntryPage(run,wc,fn,arg){
@@ -486,6 +486,11 @@ async function startListingWatch(run,wc){
   }
 }
 async function prepareScheduledGate(run,wc){
+  const estimatedNow=clockForGate(clockInfo,{monoNow:performance.now()})?.serverNowMs??Date.now();
+  if(estimatedNow>run.openAt+2000)throw Error('설정한 예매 시작 시각의 진입 구간이 지났습니다. 미래 시각을 지정해 다시 시작해 주세요.');
+  const guarded=await bridge.request({action:'entry.guardNextDocument',tabId:wc.id,documentId:wc.documentId,arg:{goodsCode:run.goodsCode,runId:run.id}});runs.assert(run);
+  if(guarded?.installed!==true)throw Error('준비 화면의 조기 진입 보호를 확인하지 못했습니다. 화면을 열지 않고 중지합니다.');
+  runLog.event('entry-guard',{kind:'document-start',result:'installed',message:'사이트 자동 요청도 지정한 ±2초 구간 전까지 보류합니다.'});
   const original={documentId:wc.documentId,url:wc.getURL(),version:scopeVersions.get(wc.id)};
   run.listingPreparationSent=true;run.listingDispatchedAt=Date.now();
   runLog.event('entry-preparation',{kind:'scheduled-api',message:'공식 경기 번호로 준비 화면을 미리 엽니다. 진입 API는 예약 시각에 호출합니다.'});
@@ -829,13 +834,13 @@ async function finishBookingButton(wc,run,result){
   throw Error('예매하기 후 다음 화면 도착을 확인하지 못했습니다. 중복 요청하지 않았으니 Chrome의 현재 화면을 확인해 주세요.');
 }
 function launch(run,task){
-  const stopWatchers=()=>Promise.allSettled([...run.windowIds].map(id=>{const wc=targets.get(id);return wc&&!wc.isDestroyed()&&wc.missingSince==null?js(wc,'stopWatchers'):null;}));
+  const stopWatchers=()=>Promise.allSettled([...run.windowIds].map(async id=>{await bridge.request({action:'entry.clearGuard',tabId:id}).catch(()=>{});const wc=targets.get(id);return wc&&!wc.isDestroyed()&&wc.missingSince==null?js(wc,'stopWatchers'):null;}));
   run.task=(async()=>{try{const result=await task();if(result?.completed===true)run.outcome=result.bookingAdvanced?'booking-advanced':'price-confirmed';await stopWatchers();finishRun(run,result?.message||'작업이 끝났습니다.');return result;}catch(error){run.failureDetail=error.message;await stopWatchers();finishRun(run,run.stopReason||(run.signal.aborted?'중지했습니다. ':'')+error.message);throw error;}})();
   run.task.catch(()=>{});return run.task;
 }
 async function startRun(payload){
   const extensionVersion=bridge.getState().extensionVersion;
-  if(extensionVersion!==undefined&&!seatExtensionCompatible(extensionVersion))throw Error('정시 API 진입과 좌석 등급별 일반 가격 선택에는 v0.9.29 이상 Chrome 확장이 필요합니다. 확장 업데이트 적용 후 다시 연결해 주세요.');
+  if(extensionVersion!==undefined&&!seatExtensionCompatible(extensionVersion))throw Error('정시 API 진입과 좌석 등급별 일반 가격 선택에는 v0.9.30 이상 Chrome 확장이 필요합니다. 확장 업데이트 적용 후 다시 연결해 주세요.');
   if(bridge.getState().bookingNoticeSupported===false)throw Error('예매 안내를 처리하려면 v0.9 폴더의 chrome-extension을 등록하고 새 코드로 다시 연결해 주세요.');
   const requestedPreferences=normalizePreferences(payload?.preferences||preferences);
   if(extensionVersion!==undefined&&!/^0\.9\.(?:[7-9]|[1-9]\d+)$/.test(String(extensionVersion)))throw Error('경기 식별 검증에는 v0.9.7 Chrome 확장이 필요합니다.');
@@ -872,6 +877,7 @@ async function startRun(payload){
       if(payload.openAt==null){try{official=await readPostseasonOpening(run.goodsCode,(url,options)=>net.fetch(url,options));}catch(error){runLog.event('opening-time',{message:error.message});}}
       runs.assert(run);
       Object.assign(run,openingPlan({requested:payload.openAt,official:official?.openAt,strategy:run.entry.strategy}));
+      if(run.entry.strategy==='clock'&&(clockForGate(clockInfo,{monoNow:performance.now()})?.serverNowMs??Date.now())>run.openAt+2000)throw Error('설정한 예매 시작 시각의 진입 구간이 지났습니다. 미래 시각을 지정해 주세요.');
       if(official?.placeCode)run.expectedBooking={goodsCode:run.goodsCode,placeCode:official.placeCode};
       runLog.event('opening-time',{message:'준비 화면 예약 '+new Date(run.openAt).toISOString(),kind:payload.openAt!=null?'사용자 지정':'공식 경기 API'});
     }
@@ -882,8 +888,10 @@ async function startRun(payload){
       pinListingDocument(run,wc);
       run.expectedBooking=Object.fromEntries(['goodsCode','placeCode','playDate','playTime'].filter(k=>official[k]!=null).map(k=>[k,official[k]]));run.goodsCode=run.expectedBooking.goodsCode;run.placeCode=run.expectedBooking.placeCode;
       const officialOpenAt=official.openAt??parseOpening(game.schedule);
+      run.officialOpenAt=officialOpenAt;
       run.game=game;run.openAt=payload.openAt==null?(officialOpenAt??Date.now()):Number(payload.openAt);
       runLog.event("opening-time",{message:officialOpenAt==null?"공식 시각 미확인":"공식 시작 "+new Date(officialOpenAt).toISOString(),kind:official.openingSource||"card"});
+      if(Number.isFinite(run.openAt))runLog.event('opening-effective',{message:'적용 시각 '+new Date(run.openAt).toISOString()+' · 진입 구간 '+new Date(run.openAt-2000).toISOString()+' ~ '+new Date(run.openAt+2000).toISOString(),kind:payload.openAt!=null?'사용자 지정':'공식 시각'});
       if(!Number.isFinite(run.openAt)||run.openAt>Date.now()+15*86400000)throw Error('15일 이내의 오픈 시각을 입력해 주세요.');
       run.clockEligible=run.entry.strategy==='clock'&&Number.isFinite(run.openAt)&&(officialOpenAt!=null||payload.openAt!=null);
       run.entryActionsStarted=true;
@@ -927,7 +935,7 @@ async function saveObservation(wc,run){
   const observation=run?await runJs(run,wc,bookingObservation):await js(wc,bookingObservation);
   if(wc.isDestroyed()||wc.documentId!==documentId||scopeVersions.get(wc.id)!==version)throw Error('기록 중 경기 또는 문서가 변경되었습니다.');
   if(observation?.schemaVersion!==1)throw Error('좌석 기록에는 최신 확장이 필요합니다.');
-  observation.metadata=[...(metaStores.get(wc.id)?.values()||[])].map(row=>Object.fromEntries(['id','block','blockKey','gradeCode','grade','row','rowLabel','rowKind','displayRow','number','rowIdx','colIdx','segment','aisle','neighbors','exposable','grouped','hasMetadata','rawRowLabel','rawSeatNumber','domAvailable','singletonGroup','labelFormat','groupSize','seatGroupId'].filter(k=>row[k]!==undefined).map(k=>[k,row[k]])));
+  observation.metadata=[...(metaStores.get(wc.id)?.values()||[])].map(row=>Object.fromEntries(['id','block','blockName','blockKey','gradeCode','grade','row','rowLabel','rowKind','displayRow','number','rowIdx','colIdx','segment','aisle','neighbors','exposable','grouped','hasMetadata','rawRowLabel','rawSeatNumber','domAvailable','singletonGroup','labelFormat','groupSize','seatGroupId'].filter(k=>row[k]!==undefined).map(k=>[k,row[k]])));
   const directory=path.join(dataRoot,'observations');fs.mkdirSync(directory,{recursive:true});
   const file=path.join(directory,'booking-'+Date.now()+'.json');
   fs.writeFileSync(file,JSON.stringify(observation,null,2));

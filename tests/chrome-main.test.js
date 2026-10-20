@@ -6,14 +6,14 @@ function setup({savedPreferences=null,savedDesktop=null,writeError=false,savedLa
   const calls=[];
   class Target{
     constructor(bridge,row){this.update(row);}update(row){Object.assign(this,row);}getURL(){return this.url;}getTitle(){return this.title||'fixture';}isDestroyed(){return !!this.destroyed;}destroy(){this.destroyed=true;}isDemo(){return false;}
-    async invoke(fn,arg){if(fn?.name==='httpBookingAction'){calls.push({fn,arg,id:this.id});return context.httpInvoke?context.httpInvoke(fn,arg):{stage:'ready',status:'pending',requestCount:6,heldCount:2,confirmed:true,validated:true};}if(fn?.name==='httpBookingNavigate'){calls.push({fn,arg,id:this.id});return context.httpInvoke?context.httpInvoke(fn,arg):arg.checkOnly?{supported:true}:{dispatched:true};}if(context.priceInvoke&&['proceedBooking','bookingProgress','priceState','adultPriceStep'].includes(fn?.name)){calls.push({fn,arg,id:this.id});return context.priceInvoke(fn,arg);}if(fn?.name==='priceState')return {ready:true,quantity:context.api?.runs.current?.preferences.quantity||2};if(fn?.name==='proceedBooking')return {dispatched:true};if(fn?.name==='bookingProgress')return {ready:true};if(fn?.name==='adultPriceStep')return {status:'complete',message:'가격/할인 화면 · 성인 가격 확인'};if(fn?.name==='bookingIdentity')return context.bookingIdentity||{goodsCode:'26005452',placeCode:'25001730',playSeq:'001'};if(fn?.name==='resolveGame')return {goodsCode:'26005452',placeCode:'25001730',playSeq:'001'};calls.push({fn,arg,id:this.id});if(context.invoke)return context.invoke(fn,arg);if(fn==='gateState')return null;if(fn?.name==='scene')return {selected:[],buttons:[],grades:[],hasSeats:false};return {};}
+    async invoke(fn,arg){if(fn?.name==='httpBookingAction'){calls.push({fn,arg,id:this.id});return context.httpInvoke?context.httpInvoke(fn,arg):{stage:'ready',status:'pending',requestCount:6,heldCount:2,confirmed:true,validated:true};}if(fn?.name==='httpBookingNavigate'){calls.push({fn,arg,id:this.id});return context.httpInvoke?context.httpInvoke(fn,arg):arg.checkOnly?{supported:true}:{dispatched:true};}if(context.priceInvoke&&['proceedBooking','bookingProgress','priceState','adultPriceStep'].includes(fn?.name)){calls.push({fn,arg,id:this.id});return context.priceInvoke(fn,arg);}if(fn?.name==='priceState')return {ready:true,quantity:context.api?.runs.current?.preferences.quantity||2};if(fn?.name==='proceedBooking')return {dispatched:true};if(fn?.name==='bookingProgress')return {ready:true};if(fn?.name==='adultPriceStep')return {status:'complete',message:'가격/할인 화면 · 성인 가격 확인'};if(fn?.name==='bookingIdentity')return context.bookingIdentity||{goodsCode:'26005452',placeCode:'25001730',playSeq:'001'};if(fn?.name==='resolveGame')return context.officialGame||{goodsCode:'26005452',placeCode:'25001730',playSeq:'001',openAt:Date.now()+120000};calls.push({fn,arg,id:this.id});if(context.invoke)return context.invoke(fn,arg);if(fn==='gateState')return null;if(fn?.name==='scene')return {selected:[],buttons:[],grades:[],hasSeats:false};return {};}
   }
   const electron={app:{isPackaged:false,getAppPath:()=>path.resolve(__dirname,'..'),setPath(){}},powerSaveBlocker:{start:()=>1,isStarted:()=>true,stop(){}},shell:{openExternal:async url=>calls.push({external:url})}};
   const context={require:n=>n==='electron'?electron:n==='./ocr-client'&&ocr?{OcrClient:class{async warmup(){return {};}async recognize(data,options){calls.push({ocr:true});return ocr(data,options);}close(){}}}:n==='./chrome-target'?{ChromeTarget:Target}:n==='./browser-bridge'?{BrowserBridge:class{}}:n==='node:fs'?{...fs,statSync(file){if(savedLastRun&&file.endsWith('last-run.json'))return {size:JSON.stringify(savedLastRun).length};throw Error('fixture');},readFileSync(file){if(savedDesktop&&file.endsWith('settings.json'))return JSON.stringify(savedDesktop);if(savedPreferences&&file.endsWith('preferences.json'))return JSON.stringify(savedPreferences);if(savedLastRun&&file.endsWith('last-run.json'))return JSON.stringify(savedLastRun);throw Error('fixture');},mkdirSync(){},readdirSync(){return [];},appendFileSync(file,body){if(writeError)throw Error("fixture write failure");(context.logs??=[]).push({file,body});},writeFileSync(file,body){if(writeError)throw Error('fixture write failure');calls.push({write:file,body});}}:load(n),__dirname:path.dirname(filename),process:{argv:[],pid:0},URL,URLSearchParams,Date,console,setTimeout,clearTimeout};
   vm.createContext(context);vm.runInContext(source+`
-  bridge={getState:()=>globalThis.bridgeState||{},listTabs:()=>globalThis.bridgeTabs||[],request:async q=>{globalThis.calls.push(q);if(q.action==='tabs.open'&&globalThis.openedTab)return globalThis.openedTab;if(q.action==='network.attach'&&globalThis.attachPromise)await globalThis.attachPromise;if(q.action==='network.snapshot')return globalThis.network;return {};}};
+  bridge={getState:()=>globalThis.bridgeState||{},listTabs:()=>globalThis.bridgeTabs||[],request:async q=>{globalThis.calls.push(q);if(q.action==='entry.guardNextDocument')return {installed:globalThis.guardInstalled!==false};if(q.action==='tabs.open'&&globalThis.openedTab)return globalThis.openedTab;if(q.action==='network.attach'&&globalThis.attachPromise)await globalThis.attachPromise;if(q.action==='network.snapshot')return globalThis.network;return {};}};
   globalThis.api={scheduleGateClock,pinListingDocument,rememberGate,rememberListing,setClock:value=>clockInfo=value,runHttpBooking,selectCandidates,rankRunSeats,followNoticeDocument,finishPriceSelection,finishBookingButton,recoverPriceSelection,autoLoop,trackTabs,onDocument,onBrowserEvent,command,selectionAdapter,beginRun,targets,runs,metaStores,scopeVersions,validHome,isEntryPage,ensureNetwork,networkSnapshot,runJs,readEntryPage,acknowledgeNotice,launch,stopRun,finishRun,last:()=>lastRun,warning:()=>diagnosticWarning,revision:()=>revision,preferences:()=>preferences,
-    applyGradeDetails,gradeStores,recoverSeatDetails,current,active:()=>active,begin:id=>{active=id;return beginRun(targets.get(id),{},'auto');},setTask:p=>runner.task=p};`,context);
+    prepareScheduledGate,applyGradeDetails,gradeStores,recoverSeatDetails,current,active:()=>active,begin:id=>{active=id;return beginRun(targets.get(id),{},'auto');},setTask:p=>runner.task=p};`,context);
   context.calls=calls;context.network={healthy:true,sequence:0,pending:[],results:[]};
   return {api:context.api,context,calls};
 }
@@ -259,7 +259,7 @@ test('loss on an old parent tab cannot overwrite the active popup result',()=>{
 });
 test('older extension cannot begin the updated seat flow before any browser action',async()=>{
   const {api,context,calls}=setup();api.trackTabs([gate(1)]);context.bridgeState={extensionVersion:'0.9.3'};
-  await assert.rejects(api.command('start',{}),/v0.9.29/);assert.equal(api.runs.current,null);assert.equal(calls.length,0);
+  await assert.rejects(api.command('start',{}),/v0.9.30/);assert.equal(api.runs.current,null);assert.equal(calls.length,0);
 });
 test('Chrome targets: only a child of the running tab is adopted; unrelated tabs do not switch target',()=>{
   const {api}=setup();api.trackTabs([gate(1),gate(7)]);const run=api.begin(1);run.entryActionsStarted=true;
@@ -444,6 +444,7 @@ for(const read of ['gateStatus','gateState'])test(`The ${read} observation toler
 });
 
 for(const message of [
+  'Frame with ID 0 was removed.',
   'Could not establish connection. Receiving end does not exist.',
   'The message port closed before a response was received.',
   'A listener indicated an asynchronous response by returning true, but the message channel closed before a response was received'
@@ -462,6 +463,7 @@ for(const message of [
   const events=context.logs.flatMap(l=>l.body.trim().split('\n').map(JSON.parse));
   assert.ok(events.some(e=>e.event==='entry-transition'&&e.result==='waiting'));
   assert.ok(events.some(e=>e.event==='entry-transition'&&e.result==='observed'));
+  assert.ok(!events.some(e=>e.event==='command-error'));
 });
 
 test('A disconnected gate read remains cancellable and never reissues a command while waiting',async()=>{
@@ -950,7 +952,7 @@ test('unknown or quantity-only prices, existing holds and resumed price steps st
 
 test('starting on a countdown gate preserves the supplied schedule and arms conditional HTTP',async()=>{
   const {api,context}=setup();api.trackTabs([gate(1)]);const opening=Date.now()+120000;
-  context.bridgeState={extensionVersion:'0.9.29'};
+  context.bridgeState={extensionVersion:'0.9.30'};
   context.invoke=(fn,arg)=>{
     if(fn?.name==='gateStatus')return {supported:true,goodsCode:'26005452',prepared:true,enabled:false};
     if(fn==='gateState')return null;
@@ -963,7 +965,7 @@ test('starting on a countdown gate preserves the supplied schedule and arms cond
 });
 test('conditional entry refuses an extension without the new HTTP runtime',async()=>{
   const {api,context,calls}=setup();api.trackTabs([gate(1)]);context.bridgeState={extensionVersion:'0.9.18'};
-  await assert.rejects(api.command('start',{entryStrategy:'clock',openAt:Date.now()+10000}),/v0.9.29/);assert.equal(calls.length,0);
+  await assert.rejects(api.command('start',{entryStrategy:'clock',openAt:Date.now()+10000}),/v0.9.30/);assert.equal(calls.length,0);
 });
 
 test('listing start waits through disabled states and follows activation to the seat route exactly once',async()=>{
@@ -1016,10 +1018,28 @@ test('scheduled listing start prepares the verified gate without waiting for lis
 });
 test('scheduled listing start refuses an unknown opening time instead of silently using activation mode',async()=>{
   const {api,context,calls}=setup();api.trackTabs([gate(1,{url:'https://nol.yanolja.com/ticket/genre/sports/postseason'})]);
+  context.officialGame={goodsCode:'26005452',placeCode:'25001730',playSeq:'001'};
   context.invoke=fn=>fn?.name==='gameCards'?[{key:'wanted',schedule:''}]:{};
   await api.command('start',{key:'wanted',entryStrategy:'clock'});const run=api.runs.current;
   await assert.rejects(run.task,/예매 시작 시각을 확인하지 못했습니다/);
   assert.equal(calls.some(call=>['armListing','prepareScheduledGate'].includes(call.fn?.name)),false);
+});
+
+test('already-on-sale listing installs a document-start guard before navigation while preserving the custom time',async()=>{
+ const {api,context,calls}=setup();api.trackTabs([gate(1,{url:'https://nol.yanolja.com/ticket/genre/sports/postseason'})]);
+ const run=api.begin(1),target=Date.now()+60000;Object.assign(run,{openAt:target,officialOpenAt:Date.now()-3600000,goodsCode:'26005452',placeCode:'25001730',game:{key:'wanted'}});
+ context.invoke=fn=>{assert.equal(fn.name,'prepareScheduledGate');assert.ok(calls.some(c=>c.action==='entry.guardNextDocument'));return {dispatched:true};};
+ await api.prepareScheduledGate(run,api.current());assert.equal(run.openAt,target);assert.equal(calls.filter(c=>c.action==='entry.guardNextDocument').length,1);
+});
+test('unconfirmed document-start guard prevents preparation navigation',async()=>{
+ const {api,context,calls}=setup();api.trackTabs([gate(1)]);const run=api.begin(1);run.openAt=Date.now()+60000;context.guardInstalled=false;
+ await assert.rejects(api.prepareScheduledGate(run,api.current()),/조기 진입 보호/);assert.equal(calls.some(c=>c.fn?.name==='prepareScheduledGate'),false);
+});
+
+test('expired custom opening stops before preparation rather than entering immediately',async()=>{
+  const {api,calls}=setup();api.trackTabs([gate(1)]);const run=api.begin(1);run.openAt=Date.now()-5000;
+  await assert.rejects(api.prepareScheduledGate(run,api.current()),/진입 구간이 지났습니다/);
+  assert.equal(calls.some(c=>c.fn?.name==='prepareScheduledGate'),false);
 });
 
 test('a clock sample is installed once per listing or gate document, including a listing-to-gate transition',async()=>{

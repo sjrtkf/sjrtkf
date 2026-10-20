@@ -11,6 +11,30 @@ function worker(){
   return {context,chrome,messages,listeners,dispatch:vm.runInContext('dispatch',context),disconnect:vm.runInContext('disconnected',context)};
 }
 const command=(action,extra={})=>({action,tabId:7,documentId:'doc1',expiresAt:Date.now()+10000,...extra});
+test('selected-tab early guard uses bundled source and cleanup removes it without opening another tab',async()=>{
+ const w=worker(),protocol=[];w.context.BaseballEarlyEntry=function(config){return config;};
+ w.chrome.debugger={sendCommand:async(target,method,args)=>{protocol.push({target,method,args});return {identifier:'guard-1'};}};
+ assert.equal((await w.dispatch(command('entry.guardNextDocument',{arg:{goodsCode:'26014421',runId:1}}))).installed,true);
+ assert.equal(protocol[0].target.tabId,7);assert.equal(protocol[0].method,'Page.addScriptToEvaluateOnNewDocument');
+ assert.ok(protocol[0].args.source.includes('"goodsCode":"26014421"'));assert.ok(!protocol[0].args.source.includes('test-token'));
+ await assert.rejects(w.dispatch(command('entry.guardNextDocument',{arg:{goodsCode:'26014421',runId:1}})),/이미 설정/);
+ await w.dispatch(command('entry.clearGuard'));assert.equal(protocol.at(-1).method,'Page.removeScriptToEvaluateOnNewDocument');
+ assert.equal(protocol.at(-1).args.identifier,'guard-1');
+ assert.equal((await w.dispatch(command('entry.guardNextDocument',{arg:{goodsCode:'26014421',runId:2}}))).installed,true);
+ await w.dispatch(command('page.stopWatchers'));assert.equal(protocol.at(-1).method,'Page.removeScriptToEvaluateOnNewDocument');
+});
+test('early guard cancellation during installation removes the late script registration',async()=>{
+ const w=worker(),protocol=[];let release;w.context.BaseballEarlyEntry=function(){};
+ w.chrome.debugger={sendCommand:async(target,method,args)=>{protocol.push(method);return method==='Page.addScriptToEvaluateOnNewDocument'?new Promise(r=>{release=r;}):{};}};
+ const pending=assert.rejects(w.dispatch(command('entry.guardNextDocument',{arg:{goodsCode:'26014421',runId:1}})),/중지/);
+ while(!release)await Promise.resolve();
+ await w.dispatch(command('entry.clearGuard'));release({identifier:'late-guard'});await pending;
+ assert.equal(protocol.at(-1),'Page.removeScriptToEvaluateOnNewDocument');
+});
+test('early guard rejects unsupported product or run arguments before protocol installation',async()=>{
+ const w=worker();
+ for(const arg of [{goodsCode:'bad',runId:1},{goodsCode:'26014421',runId:0}])await assert.rejects(w.dispatch(command('entry.guardNextDocument',{arg})),/설정이 올바르지/);
+});
 
 test('worker restart restores persistent pairing and starts reconnecting without a pairing popup',async()=>{
   const w=worker(),writes=[];

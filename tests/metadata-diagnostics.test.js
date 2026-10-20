@@ -49,7 +49,7 @@ test('diagnostic raw fields are at most 80 characters and never serialize object
 test('seat samples whitelist bounded diagnostics and omit seat identities, authentication and prices',()=>{
   const row={kind:'seat',id:'private-seat-id',hasMetadata:true,gradeCode:'C'.repeat(120),grade:'G'.repeat(120),block:'B'.repeat(120),rowLabel:'L'.repeat(120),rawRowLabel:'R'.repeat(120),rawSeatNumber:'N'.repeat(120),row:1,number:1,rowIdx:2,colIdx:3,exposable:true,grouped:false,domAvailable:true,sessionId:'session-secret',token:'token-secret',prices:{salesPrice:'price-secret'},cookie:'cookie-secret'};
   const result=assessSeatRead([row]),sample=result.seatSamples[0];
-  assert.deepEqual(Object.keys(sample).sort(),['gradeCode','grade','block','rowLabel','rawRowLabel','rawSeatNumber','rowIdx','colIdx','hasMetadata','exposable','grouped','domAvailable','reasons'].sort());
+  assert.deepEqual(Object.keys(sample).sort(),['gradeCode','grade','block','blockName','rowLabel','rawRowLabel','rawSeatNumber','rowIdx','colIdx','hasMetadata','exposable','grouped','domAvailable','reasons'].sort());
   for(const key of ['gradeCode','grade','block','rowLabel','rawRowLabel','rawSeatNumber'])assert.equal(sample[key].length,80);
   assert.deepEqual(sample.reasons,[]);
   for(const secret of ['private-seat-id','session-secret','token-secret','price-secret','cookie-secret'])assert.ok(!JSON.stringify(result).includes(secret));

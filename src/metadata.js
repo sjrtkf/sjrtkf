@@ -5,14 +5,14 @@ function metadataUrl(value){try{const u=new URL(value);return !u.username&&!u.pa
 // serializes this pure helper beside both consumers.
 function parseSeatLabels(rowNo,seatNo){
   const raw=typeof rowNo==='string'||typeof rowNo==='number'?String(rowNo):'';
-  const qualified=raw.match(/^([A-Z]\d{1,2})구역\s+(\d+|[A-Z])열$/),text=qualified?qualified[2]:raw;
+  const qualified=raw.match(/^([A-Z0-9가-힣]{1,24})구역\s+(\d+|[A-Z])열$/),text=qualified?qualified[2]:raw;
   const numeric=text.match(/^(\d+)(?:열)?$/),alpha=text.match(/^([A-Z])(?:열)?$/);
   let row=null,rowLabel=null,rowKind=null;
   if(numeric&&Number.isSafeInteger(Number(numeric[1]))){row=Number(numeric[1]);rowLabel=String(row);rowKind='numeric';}
   else if(alpha){row=alpha[1].charCodeAt(0)-64;rowLabel=alpha[1];rowKind='alpha';}
   const rawNumber=typeof seatNo==='string'||typeof seatNo==='number'?String(seatNo):'',numberMatch=rawNumber.match(/^(\d+)(?:번)?$/);
   const number=numberMatch&&Number.isSafeInteger(Number(numberMatch[1]))?Number(numberMatch[1]):null;
-  return {row,rowLabel,rowKind,number};
+  return {row,rowLabel,rowKind,number,...(qualified?{blockName:qualified[1]+'구역'}:{})};
 }
 function parseMetadata(body){
   const diagnosticLabel=value=>typeof value==='string'?value.slice(0,80):typeof value==='number'&&Number.isFinite(value)?String(value).slice(0,80):null;
@@ -115,7 +115,7 @@ function assessSeatRead(rows){
     }
     if(row.domAvailable===false)reasons.push('dom-unavailable');
     const samples=reasons.length?issues:supported;
-    if(samples.length<8)samples.push({gradeCode:text(row.gradeCode),grade:text(row.grade),block:text(row.block),rowLabel:text(row.rowLabel),rawRowLabel:text(row.rawRowLabel),rawSeatNumber:text(row.rawSeatNumber),rowIdx:integer(row.rowIdx),colIdx:integer(row.colIdx),hasMetadata,exposable:flags(row.exposable),grouped:flags(row.grouped),domAvailable:flags(row.domAvailable),reasons});
+    if(samples.length<8)samples.push({gradeCode:text(row.gradeCode),grade:text(row.grade),block:text(row.block),blockName:text(row.blockName),rowLabel:text(row.rowLabel),rawRowLabel:text(row.rawRowLabel),rawSeatNumber:text(row.rawSeatNumber),rowIdx:integer(row.rowIdx),colIdx:integer(row.colIdx),hasMetadata,exposable:flags(row.exposable),grouped:flags(row.grouped),domAvailable:flags(row.domAvailable),reasons});
   }
   result.seatSamples=[...issues,...supported].slice(0,8);
   return result;

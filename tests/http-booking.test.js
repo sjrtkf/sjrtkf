@@ -33,6 +33,11 @@ function fixture(options={}){
   const invoke=arg=>sandbox.action({runId:'fixture-run',...arg}),begin=arg=>invoke({action:'begin',expected:identity,seats,quantity:2,expiresAt:Date.now()+60000,...arg});
   return {sandbox,store,calls,routes,seats,records,invoke,begin,context:()=>JSON.parse(store.get('interpark/context')),setContext:c=>store.set('interpark/context',JSON.stringify(c)),reply:fn=>{intercept=fn;},navigate:()=>sandbox.navigate({runId:'fixture-run',expected:identity,expiresAt:Date.now()+5000}),async run(){let result=await begin();for(let i=0;i<30&&result.status==='pending'&&result.stage!=='ready';i++)result=await invoke({action:'step'});return result;}};
 }
+test('a changed football display block is rejected before any seat hold despite unchanged numeric block and row',async()=>{
+ const f=fixture();for(const s of f.seats)s.blockName='WF구역';for(const r of f.records)r.rowNo='WG구역 1열';
+ await f.begin();assert.equal((await f.invoke({action:'step'})).code,'HTTP_METADATA_CHANGED');
+ assert.equal(f.calls.length,1);assert.equal(f.calls.some(c=>c.body?.operationName==='SelectSeat'),false);
+});
 test('real HTTP coordinator selects two seats, validates standard-price quantities and stores native context without clicks',async()=>{
   const f=fixture(),result=await f.run();assert.equal(result.stage,'ready');assert.equal(result.requestCount,7);assert.equal(f.calls.length,7);
   assert.equal(f.context().seats.length,2);assert.equal(f.context().prices[0].selectedSeatCount,2);assert.equal(result.validated,true);
@@ -439,7 +444,7 @@ test('fresh row changes cannot bypass a candidate selected by the maximum-row pr
 
 test('fresh labels share numeric and alphabetic normalization with metadata parsing',async()=>{
   for(const row of ['01열','1','W1구역 1열']){
-    const f=fixture();f.records[0].rowNo=row;f.records[0].seatNo='01번';const r=await f.run();assert.equal(r.stage,'ready');assert.equal(f.context().seats[0].seatNo,'01번');
+    const f=fixture();Object.assign(f.seats[0],parseSeatLabels(row,'01번'));f.records[0].rowNo=row;f.records[0].seatNo='01번';const r=await f.run();assert.equal(r.stage,'ready');assert.equal(f.context().seats[0].seatNo,'01번');
   }
   const alpha=fixture();for(const seat of alpha.seats)Object.assign(seat,{row:1,rowLabel:'A',rowKind:'alpha'});alpha.records.forEach(v=>{v.rowNo='A열';});assert.equal((await alpha.run()).stage,'ready');
   for(const row of ['A열','unknown','1열 임시']){const f=fixture();f.records[0].rowNo=row;assert.equal((await f.run()).code,'HTTP_METADATA_CHANGED');assert.equal(f.calls.length,1);}

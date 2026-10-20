@@ -126,14 +126,14 @@ const resolveGradeNames=function resolveGradeNames(rows){
 };
 const parseSeatLabels=function parseSeatLabels(rowNo,seatNo){
   const raw=typeof rowNo==='string'||typeof rowNo==='number'?String(rowNo):'';
-  const qualified=raw.match(/^([A-Z]\d{1,2})구역\s+(\d+|[A-Z])열$/),text=qualified?qualified[2]:raw;
+  const qualified=raw.match(/^([A-Z0-9가-힣]{1,24})구역\s+(\d+|[A-Z])열$/),text=qualified?qualified[2]:raw;
   const numeric=text.match(/^(\d+)(?:열)?$/),alpha=text.match(/^([A-Z])(?:열)?$/);
   let row=null,rowLabel=null,rowKind=null;
   if(numeric&&Number.isSafeInteger(Number(numeric[1]))){row=Number(numeric[1]);rowLabel=String(row);rowKind='numeric';}
   else if(alpha){row=alpha[1].charCodeAt(0)-64;rowLabel=alpha[1];rowKind='alpha';}
   const rawNumber=typeof seatNo==='string'||typeof seatNo==='number'?String(seatNo):'',numberMatch=rawNumber.match(/^(\d+)(?:번)?$/);
   const number=numberMatch&&Number.isSafeInteger(Number(numberMatch[1]))?Number(numberMatch[1]):null;
-  return {row,rowLabel,rowKind,number};
+  return {row,rowLabel,rowKind,number,...(qualified?{blockName:qualified[1]+'구역'}:{})};
 };
 const planStandardPrices=function planStandardPrices(payload,seats){
   const assessment={groups:[]},fail=code=>{const error=Error(code);error.priceAssessment=assessment;throw error;};
@@ -510,7 +510,7 @@ return Object.freeze({
   };
   if(typeof createEntryHttp==='function'){
     const control=window.__ticketSiteCode,epoch=control?.epoch;
-    http=createEntryHttp({
+    const options={
       assertActive:()=>{if(done||location.pathname!==startPath||control&&(window.__ticketSiteCode!==control||control.epoch!==epoch||control.stopped||Date.now()>control.leaseUntil))throw Error('SITE_CODE_STOPPED');},
       beforeSend:httpRetry?()=>new Promise((resolve,reject)=>{pendingDispatch={resolve,reject};releaseDispatch();}):null,
       getWindow:httpRetry?getWindow:null,
@@ -520,7 +520,9 @@ return Object.freeze({
         if(Number.isFinite(value.startedMono)&&Number.isFinite(status.clickedMono))status.requestDelayMs=Math.max(0,value.startedMono-status.clickedMono);
         if(Number.isFinite(value.startedMono)&&Number.isFinite(status.clock.deadlineMono))status.requestDeadlineDelayMs=value.startedMono-status.clock.deadlineMono;
       }
-    });
+    };
+    const early=window.__ticketEarlyEntry;
+    http=httpRetry&&early?.available&&early.goodsCode===String(goodsCode)&&early.runId===runId?early.adopt(options):createEntryHttp(options);
   }
   window.__bearsGate={status,stop,setClock,requestObserved(){if(done||http?.claimed)return;status.phase='request-observed';status.reason='사이트의 진입 요청을 관찰했습니다.';stop();}};tick();return status;
 },
@@ -1243,7 +1245,7 @@ return Object.freeze({
           &&wanted.row===null&&wanted.number===null&&wanted.seatGroupId===v.seatGroupId&&v.seatGroupId===v.seatInfoId+'::1::1'
           &&Number.isSafeInteger(v.rowIdx)&&v.rowIdx>=0&&Number.isSafeInteger(v.colIdx)&&v.colIdx>=0
           &&list.flatMap(b=>Array.isArray(b?.seats)?b.seats:[]).filter(member=>member?.seatGroupId===v.seatGroupId).length===1;
-        const labels=parseSeatLabels(v.rowNo,v.seatNo),sameLabels=Number.isSafeInteger(labels.row)&&Number.isSafeInteger(labels.number)&&labels.row===wanted.row&&labels.rowLabel===wanted.rowLabel&&labels.rowKind===wanted.rowKind&&labels.number===wanted.number;
+        const labels=parseSeatLabels(v.rowNo,v.seatNo),sameLabels=Number.isSafeInteger(labels.row)&&Number.isSafeInteger(labels.number)&&labels.row===wanted.row&&labels.rowLabel===wanted.rowLabel&&labels.rowKind===wanted.rowKind&&labels.number===wanted.number&&(labels.blockName??null)===(wanted.blockName??null);
         // A per-seat name overrides a shared grade-code label. Preserve the
         // established missing-name fallback, but re-rank a changed explicit
         // name so restricted/obstructed and area filters run on fresh metadata.

@@ -13,7 +13,7 @@ function safeDetail(input={}){
   if(Array.isArray(input.grades))out.grades=input.grades.slice(0,60).map(g=>({name:safeText(g.name,150),code:safeText(g.code,50),count:Number.isFinite(g.count)&&g.count>=0?g.count:null,eligible:g.eligible===true,reasons:(Array.isArray(g.reasons)?g.reasons:[]).slice(0,8).map(r=>safeText(r,60))}));
   if(Array.isArray(input.seatSamples))out.seatSamples=input.seatSamples.filter(s=>s&&typeof s==='object').slice(0,8).map(s=>{
     const sample={};
-    for(const key of ['gradeCode','grade','block','rowLabel','rawRowLabel','rawSeatNumber'])if(typeof s[key]==='string'||s[key]===null)sample[key]=s[key]===null?null:safeText(s[key],80);
+    for(const key of ['gradeCode','grade','block','blockName','rowLabel','rawRowLabel','rawSeatNumber'])if(typeof s[key]==='string'||s[key]===null)sample[key]=s[key]===null?null:safeText(s[key],80);
     for(const key of ['rowIdx','colIdx'])if(Number.isSafeInteger(s[key])&&s[key]>=0)sample[key]=s[key];
     for(const key of ['hasMetadata','exposable','grouped','domAvailable'])if(typeof s[key]==='boolean')sample[key]=s[key];
     sample.reasons=(Array.isArray(s.reasons)?s.reasons:[]).filter(r=>typeof r==='string').slice(0,8).map(r=>safeText(r,60));

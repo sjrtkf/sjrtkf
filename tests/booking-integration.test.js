@@ -49,7 +49,7 @@ function actionSource(){
 
 async function bookingFixture(options={}){
   const contextData={sessionId:'fixture-session',channelType:'NOL',bizCode:'WEBBR',goods:{...identity,goodsName:'격리 통합 검증',reserved:true,reservedSeat:true,isInterlocking:false,kindOfGoods:'01007',ticketMaxCount:4},playSeq:{playSeq:'001'}};
-  const maps=(options.maps||[{name:'중앙석',code:'1',block:'101',count:4}]).map((map,index)=>({...map,blockKey:'001:'+map.block,records:Array.from({length:map.count},(_,n)=>({seatInfoId:identity.goodsCode+':'+identity.placeCode+':001:'+(index*100+n),seatGrade:map.code,seatGradeName:map.name,rowIdx:0,colIdx:n,seatNo:String(n+1),rowNo:'1열',isExposable:true,seatGroupId:null}))}));
+  const maps=(options.maps||[{name:'중앙석',code:'1',block:'101',count:4}]).map((map,index)=>({...map,blockKey:'001:'+map.block,records:Array.from({length:map.count},(_,n)=>({seatInfoId:identity.goodsCode+':'+identity.placeCode+':001:'+(index*100+n),seatGrade:map.code,seatGradeName:map.name,rowIdx:0,colIdx:n,seatNo:String(n+1),rowNo:map.rowNo||'1열',isExposable:true,seatGroupId:null}))}));
   const records=maps.flatMap(map=>map.records);
   if(options.resumePrice)contextData.seats=maps.flatMap(map=>map.records.map(record=>({...record,blockKey:map.blockKey}))).slice(0,options.preferences?.quantity||2);
   if(options.existingPrices)contextData.prices=structuredClone(options.existingPrices);
@@ -199,6 +199,12 @@ async function bookingFixture(options={}){
 
 const scenarios=[];
 const scenario=(name,run)=>scenarios.push({name,run});
+
+scenario('football W1 WF block and row preference reaches ordinary pricing and payment without confusing block 004',async engine=>{
+ const f=await bookingFixture({...engine,maps:[{name:'W1석(일반석)',code:'3',block:'004',rowNo:'WF구역 5열',count:4}],preferences:{quantity:1,requireTogether:false,fallbackAnywhere:false,tiers:[{areas:['W1석(일반석)'],blocks:['WF구역'],minRow:3,maxRow:9}]}});try{
+  const {task}=await f.start();assert.equal((await task).completed,true);assert.equal(f.begins.length,1);const seat=f.begins[0].seats[0];assert.equal(seat.block,'004');assert.equal(seat.row,5);assert.equal(seat.grade,'W1석(일반석)');assert.deepEqual(await f.destination(),['/payment']);
+ }finally{await f.close();}
+});
 
 scenario('real main joins missing metadata, ranks adjacent seats and completes the actual HTTP/navigation state machines',async engine=>{
   const f=await bookingFixture(engine);try{

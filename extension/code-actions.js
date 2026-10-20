@@ -86,7 +86,7 @@ const runtime=function codeRuntime(action,arg,meta,invokeSiteFunction,makeAction
   }
   if(meta.epoch<control.epoch)throw Error('SITE_CODE_STOPPED');
   if(meta.epoch>control.epoch){stop();control.epoch=meta.epoch;control.error=null;control.stopped=true;}
-  if(cancel){control.stopped=true;control.leaseUntil=0;control.error=null;stop();return {stopped:true};}
+  if(cancel){window.__ticketEarlyEntry?.stop();control.stopped=true;control.leaseUntil=0;control.error=null;stop();return {stopped:true};}
   if(action==='lease'){control.leaseUntil=Math.min(meta.expiresAt,Date.now()+5000);return {ready:true};}
   if(control.error)throw Error(control.error);
   // A fresh extension command grants a short lease; autonomous callbacks only
@@ -474,7 +474,7 @@ return {
   };
   if(typeof createEntryHttp==='function'){
     const control=window.__ticketSiteCode,epoch=control?.epoch;
-    http=createEntryHttp({
+    const options={
       assertActive:()=>{if(done||location.pathname!==startPath||control&&(window.__ticketSiteCode!==control||control.epoch!==epoch||control.stopped||Date.now()>control.leaseUntil))throw Error('SITE_CODE_STOPPED');},
       beforeSend:httpRetry?()=>new Promise((resolve,reject)=>{pendingDispatch={resolve,reject};releaseDispatch();}):null,
       getWindow:httpRetry?getWindow:null,
@@ -484,7 +484,9 @@ return {
         if(Number.isFinite(value.startedMono)&&Number.isFinite(status.clickedMono))status.requestDelayMs=Math.max(0,value.startedMono-status.clickedMono);
         if(Number.isFinite(value.startedMono)&&Number.isFinite(status.clock.deadlineMono))status.requestDeadlineDelayMs=value.startedMono-status.clock.deadlineMono;
       }
-    });
+    };
+    const early=window.__ticketEarlyEntry;
+    http=httpRetry&&early?.available&&early.goodsCode===String(goodsCode)&&early.runId===runId?early.adopt(options):createEntryHttp(options);
   }
   window.__bearsGate={status,stop,setClock,requestObserved(){if(done||http?.claimed)return;status.phase='request-observed';status.reason='사이트의 진입 요청을 관찰했습니다.';stop();}};tick();return status;
 },

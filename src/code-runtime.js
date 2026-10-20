@@ -17,7 +17,7 @@ function codeRuntime(action,arg,meta,invokeSiteFunction,makeActions){
   }
   if(meta.epoch<control.epoch)throw Error('SITE_CODE_STOPPED');
   if(meta.epoch>control.epoch){stop();control.epoch=meta.epoch;control.error=null;control.stopped=true;}
-  if(cancel){control.stopped=true;control.leaseUntil=0;control.error=null;stop();return {stopped:true};}
+  if(cancel){window.__ticketEarlyEntry?.stop();control.stopped=true;control.leaseUntil=0;control.error=null;stop();return {stopped:true};}
   if(action==='lease'){control.leaseUntil=Math.min(meta.expiresAt,Date.now()+5000);return {ready:true};}
   if(control.error)throw Error(control.error);
   // A fresh extension command grants a short lease; autonomous callbacks only

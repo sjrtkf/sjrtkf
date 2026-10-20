@@ -3,7 +3,7 @@
 const PHASES={prepare:'실행 준비',entry:'진입·화면 전환 대기',verification:'사용자 인증·안내 대기',search:'좌석 정보·조건 확인',selection:'좌석 선택 결과 확인',completion:'다음 화면 확인',retry:'재확인 대기',stop:'중지·정리',other:'기타 처리'};
 function seatExtensionCompatible(version){
   if(typeof version!=='string'||!/^\d+\.\d+\.\d+$/.test(version))return false;
-  const parts=version.split('.').map(Number),minimum=[0,9,29];
+  const parts=version.split('.').map(Number),minimum=[0,9,30];
   for(let i=0;i<3;i++){if(parts[i]>minimum[i])return true;if(parts[i]<minimum[i])return false;}
   return true;
 }
@@ -49,8 +49,8 @@ function diagnosisForRun(run,message=''){
 function buildPreflight({connected=false,extensionUpdateRequired=false,extensionVersion,target=false,pageStage='unsupported',preferences={},inspectionOnly=false,networkHealthy=null,scene=null,seats=null,httpCapability=null,readFailed=false}={}){
   const checks=[],add=(id,level,title,detail)=>checks.push({id,level,title,detail});
   add('connection',connected?'ok':'error',connected?'Chrome 확장 연결됨':'Chrome 확장 연결 전',connected?'앱과 확장이 통신하고 있습니다. 사이트 응답 관찰 상태는 아래에서 별도로 확인합니다.':'연결 코드를 Chrome 확장에 입력하세요.');
-  if(extensionUpdateRequired||connected&&extensionVersion!==undefined&&!seatExtensionCompatible(extensionVersion))add('extension','error','확장 업데이트가 필요합니다.','좌석 등급별 일반 가격 선택과 가격 판단 기록에는 v0.9.29 이상 확장이 필요합니다. 현재 배포 폴더의 chrome-extension으로 업데이트하고 다시 연결하세요.');
-  else if(connected)add('extension',seatExtensionCompatible(extensionVersion)?'ok':'warning',seatExtensionCompatible(extensionVersion)?'확장 버전 호환 확인':'확장 버전 확인 필요','좌석 등급별 일반 가격 선택과 가격 판단 기록에는 v0.9.29 이상 확장을 사용하세요.');
+  if(extensionUpdateRequired||connected&&extensionVersion!==undefined&&!seatExtensionCompatible(extensionVersion))add('extension','error','확장 업데이트가 필요합니다.','좌석 등급별 일반 가격 선택과 가격 판단 기록에는 v0.9.30 이상 확장이 필요합니다. 현재 배포 폴더의 chrome-extension으로 업데이트하고 다시 연결하세요.');
+  else if(connected)add('extension',seatExtensionCompatible(extensionVersion)?'ok':'warning',seatExtensionCompatible(extensionVersion)?'확장 버전 호환 확인':'확장 버전 확인 필요','좌석 등급별 일반 가격 선택과 가격 판단 기록에는 v0.9.30 이상 확장을 사용하세요.');
   add('target',target?'ok':'error',target?'대상 탭 확인':'예매 탭을 선택하세요.',target?'현재 선택한 탭을 기준으로 점검했습니다.':'경기 목록 또는 예매창을 열고 대상 탭을 선택하세요.');
   const stages={listing:'경기 목록',gate:'예매 준비',seat:'좌석 선택',unsupported:'지원 여부 미확인'};
   if(target)add('page',pageStage==='unsupported'?'error':'ok','현재 화면 · '+stages[pageStage],pageStage==='seat'?'좌석 선택 단계의 화면을 읽습니다.':'예매창 진입 후 좌석 구조를 추가로 확인해야 합니다.');

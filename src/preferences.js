@@ -17,7 +17,10 @@ function normalizePreferences(input={}) {
 }
 const labelKey=value=>String(value??'').normalize('NFKC').replace(/\s+/g,'').toLowerCase();
 const matchesArea=(value,seat)=>[seat.grade,seat.gradeCode,seat.name,seat.code].some(v=>v!=null&&labelKey(v)===labelKey(value));
-const matchesBlock=(value,seat)=>[seat.block,seat.blockKey].some(v=>v!=null&&labelKey(v)===labelKey(value));
+const matchesBlock=(value,seat)=>{
+  const key=v=>labelKey(v).replace(/(?:구역|블록|블럭)$/,'');
+  return [seat.block,seat.blockKey,seat.blockName].some(v=>v!=null&&key(v)===key(value));
+};
 const unrestricted=tier=>!tier.areas.length&&!tier.blocks.length&&tier.minRow==null&&tier.maxRow==null;
 const coversWholeGrade=(tier,grade)=>!tier.blocks.length&&tier.minRow==null&&tier.maxRow==null&&(!tier.areas.length||tier.areas.some(v=>matchesArea(v,grade)));
 function effectiveTiers(p){

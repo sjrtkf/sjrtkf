@@ -1,11 +1,12 @@
 'use strict';
-importScripts('network-parsers.js','network-observer.js','http-navigation.js','code-actions.js');
+importScripts('network-parsers.js','network-observer.js','http-navigation.js','code-actions.js','entry-early.js');
 const ENDPOINT='http://127.0.0.1:43187';
 const capabilities=['entry.pageInfo','entry.bookingNotice','captcha.ocr','captcha.manual','extension.reload'];
 const PAGE_ACTIONS=new Set(['entry.pageInfo','entry.gameCards','entry.prepareEntry','entry.armListing','entry.setListingClock','entry.listingState','entry.stopListing','entry.gateStatus','entry.armGate','entry.setGateClock','entry.noteGateRequest','live.waitForChange','live.liveRead','live.liveAction','flow.scene','flow.clickKnown','flow.enterCode','flow.deselect','flow.dismissConflict','flow.dismissEmptySelection','pricePage.priceState','pricePage.adultPriceStep','pricePage.proceedBooking','pricePage.bookingProgress','observation.bookingObservation','directApi.bookingIdentity','publicGame.resolveGame','captcha.captchaSnapshot','captcha.captchaSubmit','captcha.captchaStatus','captcha.captchaCancel','captcha.captchaRefresh','manualCaptcha.manualCaptchaPrepare','manualCaptcha.manualCaptchaSubmit','manualCaptcha.manualCaptchaCancel','page.stopWatchers','page.pageClock','page.gateSnapshot','page.gateState','page.showAll','page.showAllGames']);
 PAGE_ACTIONS.add('entry.prepareScheduledGate');
 let token=null,connected=false,polling=false,pulseBusy=false,lastError='',revision=0,reconnectTimer=null,connectionEpoch=0,eventChain=Promise.resolve();const tracked=new Map(),epochs=new Map(),deliveredDocuments=new Map();
 const captchaRoutes=new Map();
+const earlyGuards=new Map();
 const codeDocuments=new Map(),codeInstance=String(Date.now())+':'+Math.random();
 async function invokeCode(tabId,documentId,action,arg,expiresAt=Date.now()+5000){
   const meta={connection:codeInstance+':'+connectionEpoch,epoch:epochs.get(tabId)||0,expiresAt};
@@ -58,7 +59,19 @@ async function ensureContent(tabId,documentId){
   if(ping?.error)throw Error(ping.error);
   const lease=await sendPage(tabId,{type:'baseball-lease'},{documentId});if(lease?.error)throw Error(lease.error);
 }
-async function stopPages(){await Promise.allSettled([...codeDocuments.values()].map(r=>invokeCode(r.tabId,r.documentId,'stop')));codeDocuments.clear();await Promise.allSettled([...tracked.keys()].map(tabId=>sendPage(tabId,{type:'baseball-stop'})).concat([...captchaRoutes.values(),...manualCaptchaRoutes.values()].map(route=>sendPage(route.tabId,{type:'baseball-stop'},{documentId:route.frameDocumentId}))));captchaRoutes.clear();manualCaptchaRoutes.clear();await BaseballNetwork.detachAll();}
+async function clearEarlyGuards(){
+  const guards=[...earlyGuards];earlyGuards.clear();
+  await Promise.allSettled(guards.map(async([tabId,identifier])=>{
+    await chrome.debugger.sendCommand({tabId},'Page.removeScriptToEvaluateOnNewDocument',{identifier}).catch(()=>{});
+    const frame=await chrome.webNavigation.getFrame({tabId,frameId:0}).catch(()=>null);
+    if(frame?.documentId&&allowedUrl(frame.url))await invokeCode(tabId,frame.documentId,'stop').catch(()=>{});
+  }));
+}
+async function removeEarlyGuard(tabId){
+  const identifier=earlyGuards.get(tabId);earlyGuards.delete(tabId);
+  if(identifier)await chrome.debugger.sendCommand({tabId},'Page.removeScriptToEvaluateOnNewDocument',{identifier}).catch(()=>{});
+}
+async function stopPages(){await clearEarlyGuards();await Promise.allSettled([...codeDocuments.values()].map(r=>invokeCode(r.tabId,r.documentId,'stop')));codeDocuments.clear();await Promise.allSettled([...tracked.keys()].map(tabId=>sendPage(tabId,{type:'baseball-stop'})).concat([...captchaRoutes.values(),...manualCaptchaRoutes.values()].map(route=>sendPage(route.tabId,{type:'baseball-stop'},{documentId:route.frameDocumentId}))));captchaRoutes.clear();manualCaptchaRoutes.clear();await BaseballNetwork.detachAll();}
 function captchaFrameUrl(value){try{const u=new URL(value);return (u.origin==='https://tickets.interpark.com'&&/^\/onestop(?:\/|$)/.test(u.pathname))||(u.origin==='https://ticket.interpark.com'&&/^\/(?:Book|SportsBook)\/[\w-]+\.asp$/i.test(u.pathname));}catch{return false;}}
 async function dispatchCaptcha(command,topFrame,assert){
   const {action,tabId,arg,expiresAt}=command;
@@ -133,9 +146,11 @@ async function dispatchManualCaptcha(command,topFrame,assert){
 async function disconnected(error){connected=false;connectionEpoch++;deliveredDocuments.clear();lastError=error?.message||'프로그램을 실행해 주세요.';await stopPages();if(error?.status===401||error?.status===403){token=null;await chrome.storage.local.remove('bridgeToken');await chrome.storage.session.remove('bridgeToken');}await chrome.action.setBadgeText({text:'!'});}
 async function dispatch(command){
   const {action,tabId,arg,documentId,expiresAt}=command;const connection=connectionEpoch;
-  if(action==='page.stopWatchers'||action==='captcha.captchaCancel'||action==='manualCaptcha.manualCaptchaCancel')epochs.set(tabId,(epochs.get(tabId)||0)+1);const epoch=epochs.get(tabId)||0;
+  if(action==='entry.clearGuard'||action==='page.stopWatchers'||action==='captcha.captchaCancel'||action==='manualCaptcha.manualCaptchaCancel')epochs.set(tabId,(epochs.get(tabId)||0)+1);const epoch=epochs.get(tabId)||0;
   const assert=()=>{if(!connected||connection!==connectionEpoch||epoch!==(epochs.get(tabId)||0))throw Error('중지되었거나 연결이 바뀐 동작입니다.');if(action!=='page.stopWatchers'&&(!Number.isFinite(expiresAt)||Date.now()>expiresAt))throw Error('만료된 보조 동작을 취소했습니다.');};
   assert();
+  if(action==='entry.clearGuard'){await removeEarlyGuard(tabId);return {cleared:true};}
+  if(action==='page.stopWatchers'||action==='network.detach')await removeEarlyGuard(tabId);
   if(action==='extension.reload'){await stopPages();assert();return {reload:true};}
   if(action==='tabs.list')return refreshTabs();
   if(action==='tabs.open'||action==='tabs.demo'){
@@ -149,6 +164,17 @@ async function dispatch(command){
   const frame=await (isDemo(tab.url)?demoFrame(tabId):chrome.webNavigation.getFrame({tabId,frameId:0}));assert();if(!frame?.documentId)throw Error('Chrome 화면을 준비하는 중입니다.');if(documentId&&documentId!==frame.documentId)throw Error('페이지가 바뀌어 이전 화면의 동작을 취소했습니다.');
   if(action==='tabs.focus'){await chrome.windows.update(tab.windowId,{focused:true});assert();await chrome.tabs.update(tabId,{active:true});return true;}
   if(action==='tabs.zoom'){const current=await chrome.tabs.getZoom(tabId);assert();if(arg?.delta!=null&&![-0.1,0,0.1].includes(arg.delta))throw Error('잘못된 배율입니다.');const factor=arg?.factor??(arg.delta===0?1:current+arg.delta);if(!Number.isFinite(factor)||factor<.7||factor>1.8)throw Error('잘못된 배율입니다.');await chrome.tabs.setZoom(tabId,factor);return true;}
+  if(action==='entry.guardNextDocument'){
+    if(!/^\d{8}$/.test(arg?.goodsCode)||!Number.isSafeInteger(arg?.runId)||arg.runId<1)throw Error('예약 진입 보호 설정이 올바르지 않습니다.');
+    if(earlyGuards.has(tabId))throw Error('이 탭의 예약 진입 보호가 이미 설정되어 있습니다.');
+    await BaseballNetwork.attach(tabId);assert();
+    const config={goodsCode:arg.goodsCode,runId:arg.runId};
+    const result=await chrome.debugger.sendCommand({tabId},'Page.addScriptToEvaluateOnNewDocument',{source:'('+BaseballEarlyEntry.toString()+')('+JSON.stringify(config)+');'});
+    if(typeof result?.identifier!=='string')throw Error('준비 화면의 조기 진입 보호를 설치하지 못했습니다.');
+    earlyGuards.set(tabId,result.identifier);
+    try{assert();}catch(error){await removeEarlyGuard(tabId);throw error;}
+    return {installed:true};
+  }
   if(action==='network.attach')return isDemo(tab.url)?{healthy:true,sequence:0,pending:[],results:[]}:BaseballNetwork.attach(tabId);
   if(action==='network.detach')return BaseballNetwork.detach(tabId);
   if(action==='network.snapshot')return isDemo(tab.url)?{healthy:true,sequence:0,pending:[],results:[]}:BaseballNetwork.snapshot(tabId);

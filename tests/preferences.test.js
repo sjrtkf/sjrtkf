@@ -2,6 +2,13 @@ const {test}=require('node:test');const assert=require('node:assert/strict');
 const {normalizePreferences,rankGroups,gradePlan,assessGradePlan,groupKey}=require('../src/preferences');
 const {parseMetadata,enrich,metadataUrl}=require('../src/metadata');
 const make=(row,number,extra={})=>({id:`${row}-${number}`,available:true,grade:'3루 레드석',block:'118',row,number,colIdx:number,segment:`118-${row}`,obstructed:false,aisle:number===1,neighbors:[`${row}-${number-1}`,`${row}-${number+1}`],...extra});
+test('WF display name selects only W1 ordinary seats within the saved row range',()=>{
+ const seats=[make(2,1,{grade:'W1석(일반석)',block:'004',blockName:'WF구역'}),make(3,14,{grade:'W1석(일반석)',block:'004',blockName:'WF구역'}),make(3,1,{grade:'W1석(일반석)',block:'005',blockName:'WG구역'}),make(10,1,{grade:'W1석(일반석)',block:'004',blockName:'WF구역'})];
+ for(const name of ['WF구역','WF','wf 구역','004']){
+  const groups=rankGroups(seats,{quantity:1,fallbackAnywhere:false,tiers:[{areas:['W1석(일반석)'],blocks:[name],minRow:3,maxRow:9}]});
+  assert.equal(groups.length,1);assert.equal(groups[0].seats[0].number,14);assert.equal(groups[0].seats[0].block,'004');
+ }
+});
 test('같은 통로의 3연석은 19열보다 13열을 먼저 고른다',()=>{
   const seats=[19,13].flatMap(row=>[1,2,3].map(n=>make(row,n)));
   assert.equal(rankGroups(seats,{quantity:3})[0].seats[0].row,13);

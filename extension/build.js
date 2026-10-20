@@ -9,6 +9,7 @@ const httpBooking=require('../src/http-booking');
 const {invokeSiteFunction,CODE_ACTIONS}=require('../src/site-code');
 const {resolveGateEntry}=require('../src/entry-request');
 const {codeRuntime}=require('../src/code-runtime');
+const {installEarlyEntry}=require('../src/entry-early');
 'use strict';
 // Build-time source copying produces static MV3 code. The extension never evaluates
 // received JavaScript, accepts function source, or loads remotely hosted code.
@@ -34,6 +35,7 @@ const codeLines=["'use strict';",`globalThis.BaseballCodeActions=new Set(${JSON.
 for(const [group,functions] of Object.entries({entry,live,flow,captcha,manualCaptcha,pricePage,page:pageActions}))for(const [name,fn] of Object.entries(functions))if(CODE_ACTIONS.has(`${group}.${name}`))codeLines.push(`${JSON.stringify(`${group}.${name}`)}:${fn.toString()},`);
 codeLines.push('};};try{return {ok:true,value:(await runtime(action,arg,meta,invokeSiteFunction,makeActions))??null};}catch(error){return {ok:false,code:/^SITE_[A-Z_]+$/.test(error?.message||"")?error.message:"SITE_ACTION_FAILED"};}};');
 fs.writeFileSync(path.join(__dirname,'code-actions.js'),codeLines.join('\n')+'\n');
+fs.writeFileSync(path.join(__dirname,'entry-early.js'),`globalThis.BaseballEarlyEntry=function(config){const classifyEntryResponse=${classifyEntryResponse.toString()};const createEntryHttp=${createEntryHttp.toString()};(${installEarlyEntry.toString()})(config);};\n`);
 const parserLines=["'use strict';",'globalThis.BaseballParsers=(()=>{',"const ORIGIN='https://tickets.interpark.com',ENTRY_ORIGIN='https://ent-waiting-api.interpark.com',ENTRY_PATH='/waiting/api/secure-url';", "const CONFLICT_CODES=new Set(['P40054','P41150','P41149','P40021']);", "const OPERATIONS={PreselectSeat:['select','preselectSeat'],BulkPreselectSeats:['select','bulkPreselectSeats'],DeselectSeat:['deselect','deselectSeat'],BulkDeselectSeats:['deselect','bulkDeselectSeats']};", "const seatIds=values=>[...new Set((Array.isArray(values)?values:[]).filter(v=>typeof v==='string'&&v.length<=200).map(v=>v.startsWith('seat_block_')?v:'seat_block_'+v))];",'return {'];
 parserLines.splice(parserLines.length-1,0,`const parseSeatLabels=${metadata.parseSeatLabels.toString()};`);
 for(const [group,functions] of Object.entries({metadata:{parseMetadata:metadata.parseMetadata,metadataUrl:metadata.metadataUrl},seatNetwork:{classifyRequest:seatNetwork.classifyRequest,classifyResponse:seatNetwork.classifyResponse},entryNetwork:{isEntryRequest:entryNetwork.isEntryRequest,classifyEntryResponse,...entryObservation}})){parserLines.push(`${group}:{`);for(const [name,fn] of Object.entries(functions))parserLines.push(`${name}:${fn.toString()},`);parserLines.push('},');}

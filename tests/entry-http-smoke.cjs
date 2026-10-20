@@ -6,12 +6,12 @@ const contractFixture=require('./fixtures/gate-entry-contract.cjs');
 const report={passed:false,scope:'Local HTTPS fixtures only; no real booking requests',checks:[]};
 app.setPath('userData',path.resolve('work/entry-http-smoke-'+process.pid));
 const watchdog=setTimeout(()=>app.exit(1),35000);
-let win,calls=0,delay=0,reject=false,rejectFirst=0,rateLimit=false;
+let win,calls=0,delay=0,reject=false,rejectFirst=0,rateLimit=false,earlyAuto=false;
 const url='https://tickets.interpark.com/gates/ticket/26014421';
 app.whenReady().then(async()=>{
  const partition=session.fromPartition('entry-http-fixture-'+process.pid);
  await partition.protocol.handle('https',async req=>{
-  if(req.url===url)return new Response('<!doctype html><main><h1>예매는 오픈 시간부터 가능해요</h1><button id="entry" disabled>남은시간 00:01</button></main>',{headers:{'content-type':'text/html; charset=utf-8'}});
+  if(req.url===url)return new Response('<!doctype html><main><h1>예매는 오픈 시간부터 가능해요</h1><button id="entry" disabled>남은시간 00:01</button></main>'+(earlyAuto?'<script>window.mountTask=fetch("https://ent-waiting-api.interpark.com/waiting/api/secure-url",{method:"POST",body:JSON.stringify({signature:"fixture",secureData:"fixture"})}).then(r=>r.json()).then(v=>window.mountDestination=v.redirectUrl).catch(e=>window.mountError=e.message);</script>':''),{headers:{'content-type':'text/html; charset=utf-8'}});
   if(req.url.startsWith('https://tickets.interpark.com/waiting?'))return new Response('<main>Fixture queue reached</main>',{headers:{'content-type':'text/html'}});
   if(req.url==='https://ent-waiting-api.interpark.com/waiting/api/secure-url'){
    calls++;const rejected=reject||calls<=rejectFirst;if(delay)await new Promise(r=>setTimeout(r,delay));
@@ -22,8 +22,20 @@ app.whenReady().then(async()=>{
  win=new BrowserWindow({show:false,webPreferences:{session:partition,backgroundThrottling:false,contextIsolation:true}});
  const evaluate=s=>win.webContents.executeJavaScript(s),pause=ms=>new Promise(r=>setTimeout(r,ms));
  const code=fs.readFileSync(path.resolve('extension/code-actions.js'),'utf8');
- async function fresh(noRequestFirst=false){
-  calls=0;await win.loadURL(url);await evaluate(code+';void 0;');
+ async function fresh(noRequestFirst=false,early=false){
+  calls=0;earlyAuto=early;let guard;
+  if(early){
+   if(!win.webContents.debugger.isAttached())win.webContents.debugger.attach('1.3');
+   await win.webContents.debugger.sendCommand('Page.enable');
+   guard=await win.webContents.debugger.sendCommand('Page.addScriptToEvaluateOnNewDocument',{source:fs.readFileSync(path.resolve('extension/entry-early.js'),'utf8')+';BaseballEarlyEntry({goodsCode:"26014421",runId:1});'});
+  }
+  await win.loadURL(url);
+  if(early){
+   await pause(80);assert.equal(calls,0,'site mount request must wait before desktop arming');
+   assert.equal(await evaluate('!!window.__ticketEarlyEntry?.http.claimed'),true);
+   await win.webContents.debugger.sendCommand('Page.removeScriptToEvaluateOnNewDocument',{identifier:guard.identifier});
+  }
+  await evaluate(code+';void 0;');
   await evaluate('window.testClicks=0;window.testFunctions=0;window.testDestination=null;window.testError=null;'+
    'document.addEventListener("click",()=>testClicks++);'+
    'window.sendEntry=async()=>{try{const r=await fetch("https://ent-waiting-api.interpark.com/waiting/api/secure-url",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({signature:"fixture",secureData:"fixture"})});return(await r.json()).redirectUrl;}catch(e){testError=e.message;throw e;}};'+
@@ -48,6 +60,8 @@ app.whenReady().then(async()=>{
  await fresh();await evaluate('BaseballCodeDispatch("stop",null,{...testMeta,epoch:2})');await activate();await pause(250);assert.equal(calls,0);report.checks.push({name:'stop before activation sends no request',calls});
  delay=400;await fresh();await activate();await pause(220);assert.ok(calls>=1);await evaluate('BaseballCodeDispatch("stop",null,{...testMeta,epoch:2})');const stoppedCalls=calls;await pause(500);state=await snapshot();assert.equal(calls,stoppedCalls);assert.equal(state.destination,null);report.checks.push({name:'late response after stop cannot navigate',calls});
  delay=0;await fresh();await evaluate('gateFixture=Object.assign(gateFixture,{});window.testNavigate=true;');await evaluate('void sendEntry().then(path=>location.assign(path)).catch(()=>{});');await until(()=>win.webContents.getURL().includes('/waiting?'),'actual navigation');assert.ok((await evaluate('document.body.textContent')).includes('Fixture queue reached'));report.checks.push({name:'successful response reaches the next waiting page through real browser navigation',calls});
+ await fresh(false,true);await pause(70);assert.equal(calls,0);await until(()=>calls>0,'held mount request');await until(async()=>!!await evaluate('window.mountDestination'),'mount response delivered');state=await snapshot();assert.equal(state.functions,0);assert.ok(state.status.http.startedMono>=state.status.clock.deadlineMono-2000);assert.ok(state.status.http.startedMono<=state.status.clock.deadlineMono+2000);report.checks.push({name:'document-start guard holds the site mount request before desktop arming, then releases it inside the fixed opening window',calls,functions:state.functions});
+ await fresh(false,true);await evaluate('BaseballCodeDispatch("stop",null,{...testMeta,epoch:2})');await pause(250);assert.equal(calls,0);assert.equal(await evaluate('window.mountDestination||null'),null);report.checks.push({name:'stop cancels a document-start mount request without navigation',calls});
  report.window={beforeMs:2000,afterMs:2000,intervalMs:30};
  report.passed=true;
 }).catch(e=>{report.error=e.stack;}).finally(()=>{
