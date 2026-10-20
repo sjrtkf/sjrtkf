@@ -223,27 +223,27 @@ const clockOutcomeLabel=value=>({'not-configured':'사용 안 함','waiting-sync
 function showEntryMode(){
   if(targetIsSeat()){$('entryMode').textContent='이미 열린 좌석 화면에서 시작합니다. 시작 버튼을 누르면 현재 화면과 선택 상태부터 확인하며 예매 진입 요청이나 오픈 시각 예약은 실행하지 않습니다.';return;}
   if(running&&currentEntry){
-    $('entryMode').textContent=currentEntry.strategy==='clock'?'이번 작업: 예약 시각 API 진입. '+(currentEntry.clockReason||'보정한 서버 시각에 진입 API 함수를 실행합니다. 버튼 활성화를 기다리지 않습니다.'):'이번 작업: 사이트 활성화 감지. 사이트가 예매 버튼을 활성화하면 진입 함수를 실행합니다.';
+    $('entryMode').textContent=currentEntry.strategy==='clock'?'이번 작업: 예약 시각 API 진입. '+(currentEntry.clockReason||'서버 시각의 오픈 −2초~+2초 구간에 30ms 간격으로 진입 API 함수를 실행합니다. 버튼 활성화를 기다리지 않습니다.'):'이번 작업: 사이트 활성화 감지. 사이트가 예매 버튼을 활성화하면 진입 함수를 실행합니다.';
     return;
   }
-  $('entryMode').textContent=(targetIsGate()?'현재 준비 화면에서 시작합니다. ':'')+($('entryStrategy').value==='clock'?'보정한 서버 시각에 사이트의 원래 진입 API 함수를 실행합니다. 버튼 활성화를 기다리지 않습니다. 서버 시각이나 준비 함수를 확인하지 못하면 활성화 대기로 전환하지 않고 중단합니다.':'로그인 후 경기 목록이나 준비 화면에서 선택한 예매 버튼의 활성화를 기다립니다.');
+  $('entryMode').textContent=(targetIsGate()?'현재 준비 화면에서 시작합니다. ':'')+($('entryStrategy').value==='clock'?'서버 시각의 오픈 −2초~+2초 구간에 30ms 간격으로 사이트의 원래 진입 API 함수를 실행합니다. 버튼 활성화를 기다리지 않습니다. 서버 시각이나 준비 함수를 확인하지 못하면 활성화 대기로 전환하지 않고 중단합니다.':'로그인 후 경기 목록이나 준비 화면에서 선택한 예매 버튼의 활성화를 기다립니다.');
 }
 function readEntrySettings(){
   const raw=$('entryOffsetMs').value,entryOffsetMs=Number(raw),entryStrategy=$('entryStrategy').value;
-  const valid=raw.trim()!==''&&Number.isInteger(entryOffsetMs)&&entryOffsetMs>=-250&&entryOffsetMs<=250&&['site','clock'].includes(entryStrategy);
-  $('entryOffsetMs').setCustomValidity(valid?'':'진입 시각 보정은 -250~250ms 범위의 정수로 입력해 주세요.');
+  const valid=raw.trim()!==''&&Number.isInteger(entryOffsetMs)&&entryOffsetMs>=-3000&&entryOffsetMs<=3000&&['site','clock'].includes(entryStrategy);
+  $('entryOffsetMs').setCustomValidity(valid?'':'진입 시각 보정은 -3000~3000ms 범위의 정수로 입력해 주세요.');
   return valid?{entryStrategy,entryOffsetMs}:null;
 }
 function restoreEntrySettings(desktop){
   if(entrySettingsInitialized||!desktop)return;
   $('entryStrategy').value=desktop.entryStrategy==='clock'?'clock':'site';
-  $('entryOffsetMs').value=Number.isInteger(desktop.entryOffsetMs)&&desktop.entryOffsetMs>=-250&&desktop.entryOffsetMs<=250?desktop.entryOffsetMs:0;
+  $('entryOffsetMs').value=Number.isInteger(desktop.entryOffsetMs)&&desktop.entryOffsetMs>=-3000&&desktop.entryOffsetMs<=3000?desktop.entryOffsetMs:0;
   entrySettingsInitialized=true;$('entrySettingsHint').textContent='진입 방식과 보정값은 변경하면 자동 저장되며 다음 실행에도 유지됩니다.';
 }
 function saveEntrySettings(){
   entrySettingsInitialized=true;showEntryMode();updateOverview();
   const payload=readEntrySettings();
-  if(!payload){$('entrySettingsHint').textContent='저장하지 못했습니다. 보정값을 -250~250ms 범위의 정수로 입력해 주세요.';message($('entrySettingsHint').textContent);return Promise.resolve(null);}
+  if(!payload){$('entrySettingsHint').textContent='저장하지 못했습니다. 보정값을 -3000~3000ms 범위의 정수로 입력해 주세요.';message($('entrySettingsHint').textContent);return Promise.resolve(null);}
   $('entrySettingsHint').textContent='진입 설정 저장 중…';
   // Serialize changes so an earlier response cannot overwrite the latest input.
   entrySettingsSave=entrySettingsSave.then(async()=>{
@@ -437,7 +437,7 @@ $('openLogs').onclick=()=>run('openLogs');
 $('recordObservation').onclick=()=>exclusive('recordObservation');
 $('panel-run').addEventListener('input',updateOverview);
 $('preflight').onclick=async()=>{const result=await exclusive('preflight',{preferences:readPrefs(),inspectionOnly:$('inspectionOnly').checked});if(result){const value=result.preflight||result;if(Array.isArray(value.checks)){lastPreflightState=JSON.stringify(value);displayPreflight(value);}}};
-$('start').onclick=async()=>{if(!$('game').value&&!targetIsGate()&&!targetIsSeat()){message('대상 경기를 선택하거나 열린 예매 준비·좌석 화면을 지정해 주세요.');showStep('page');return;}const entry=readEntrySettings();if(!entry){message('진입 시각 보정은 -250~250ms 범위의 정수로 입력해 주세요.');return;}const value=$('openAt').value;await exclusive('start',{key:targetIsSeat()?'':$('game').value,openAt:!targetIsSeat()&&value?Date.parse(value+'+09:00'):null,...entry,inspectionOnly:$('inspectionOnly').checked,preferences:readPrefs()});};
+$('start').onclick=async()=>{if(!$('game').value&&!targetIsGate()&&!targetIsSeat()){message('대상 경기를 선택하거나 열린 예매 준비·좌석 화면을 지정해 주세요.');showStep('page');return;}const entry=readEntrySettings();if(!entry){message('진입 시각 보정은 -3000~3000ms 범위의 정수로 입력해 주세요.');return;}const value=$('openAt').value;await exclusive('start',{key:targetIsSeat()?'':$('game').value,openAt:!targetIsSeat()&&value?Date.parse(value+'+09:00'):null,...entry,inspectionOnly:$('inspectionOnly').checked,preferences:readPrefs()});};
 $('stop').onclick=()=>run('stop');
 $('quickStop').onclick=()=>run('stop');
 $('submitCode').onclick=async()=>{const code=$('securityCode').value;$('securityCode').value='';await run('code',code);};

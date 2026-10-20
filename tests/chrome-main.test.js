@@ -29,7 +29,7 @@ test('entry strategy and offset survive desktop settings reload without a browse
 test('invalid entry preferences and failed persistence leave the previous settings unchanged',async()=>{
   const savedDesktop={entryStrategy:'clock',entryOffsetMs:20};
   const {api,calls}=setup({savedDesktop});
-  for(const input of [{entryStrategy:'invalid'},{entryOffsetMs:251},{entryOffsetMs:0.5}])await assert.rejects(api.command('entrySettings',input),/진입/);
+  for(const input of [{entryStrategy:'invalid'},{entryOffsetMs:3001},{entryOffsetMs:0.5}])await assert.rejects(api.command('entrySettings',input),/진입/);
   assert.equal(calls.length,0);assert.equal((await api.command('entrySettings',{})).desktop.entryOffsetMs,20);
   const failing=setup({savedDesktop,writeError:true});
   await assert.rejects(failing.api.command('entrySettings',{entryOffsetMs:30}),/write failure/);
@@ -259,7 +259,7 @@ test('loss on an old parent tab cannot overwrite the active popup result',()=>{
 });
 test('older extension cannot begin the updated seat flow before any browser action',async()=>{
   const {api,context,calls}=setup();api.trackTabs([gate(1)]);context.bridgeState={extensionVersion:'0.9.3'};
-  await assert.rejects(api.command('start',{}),/v0.9.28/);assert.equal(api.runs.current,null);assert.equal(calls.length,0);
+  await assert.rejects(api.command('start',{}),/v0.9.29/);assert.equal(api.runs.current,null);assert.equal(calls.length,0);
 });
 test('Chrome targets: only a child of the running tab is adopted; unrelated tabs do not switch target',()=>{
   const {api}=setup();api.trackTabs([gate(1),gate(7)]);const run=api.begin(1);run.entryActionsStarted=true;
@@ -950,7 +950,7 @@ test('unknown or quantity-only prices, existing holds and resumed price steps st
 
 test('starting on a countdown gate preserves the supplied schedule and arms conditional HTTP',async()=>{
   const {api,context}=setup();api.trackTabs([gate(1)]);const opening=Date.now()+120000;
-  context.bridgeState={extensionVersion:'0.9.28'};
+  context.bridgeState={extensionVersion:'0.9.29'};
   context.invoke=(fn,arg)=>{
     if(fn?.name==='gateStatus')return {supported:true,goodsCode:'26005452',prepared:true,enabled:false};
     if(fn==='gateState')return null;
@@ -963,7 +963,7 @@ test('starting on a countdown gate preserves the supplied schedule and arms cond
 });
 test('conditional entry refuses an extension without the new HTTP runtime',async()=>{
   const {api,context,calls}=setup();api.trackTabs([gate(1)]);context.bridgeState={extensionVersion:'0.9.18'};
-  await assert.rejects(api.command('start',{entryStrategy:'clock',openAt:Date.now()+10000}),/v0.9.28/);assert.equal(calls.length,0);
+  await assert.rejects(api.command('start',{entryStrategy:'clock',openAt:Date.now()+10000}),/v0.9.29/);assert.equal(calls.length,0);
 });
 
 test('listing start waits through disabled states and follows activation to the seat route exactly once',async()=>{

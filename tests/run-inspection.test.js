@@ -4,7 +4,7 @@ const assert=require('node:assert/strict');
 const {buildPreflight,diagnosisForRun,observerDiagnosis,phaseForStatus,seatExtensionCompatible}=require('../src/run-inspection');
 test('letter-row and diagnostic support require the updated extension version',()=>{
   for(const version of [null,'0.9.27','0.9.26','0.9.25','0.9.24','0.9.23','0.9.22','0.9.21','0.9.20','0.9.19','0.9.18','0.9.17','0.9.16','0.9.15','0.9.12','0.9.11','0.9.9','0.9.3','0.8.9','invalid'])assert.equal(seatExtensionCompatible(version),false);
-  for(const version of ['0.9.28','0.10.0','1.0.0'])assert.equal(seatExtensionCompatible(version),true);
+  for(const version of ['0.9.29','0.10.0','1.0.0'])assert.equal(seatExtensionCompatible(version),true);
   const report=buildPreflight({connected:true,target:true,pageStage:'seat',networkHealthy:true,extensionVersion:'0.9.3'});
   assert.equal(report.canStart,false);assert.equal(report.checks.find(c=>c.id==='extension').level,'error');
 });
@@ -33,14 +33,14 @@ test('preflight fails closed for unreadable or unsupported screens',()=>{
   }
 });
 test('preflight explains singleton quantity and row restrictions without blocking valid regular seats',()=>{
-  const result=buildPreflight({connected:true,target:true,pageStage:'seat',networkHealthy:true,extensionVersion:'0.9.28',httpCapability:{supported:true},preferences:{quantity:2,excludeRestricted:false,requireTogether:false},seats:{visible:4,detailed:4,groups:1,singletonCount:3,explicitRowBounds:true}});
+  const result=buildPreflight({connected:true,target:true,pageStage:'seat',networkHealthy:true,extensionVersion:'0.9.29',httpCapability:{supported:true},preferences:{quantity:2,excludeRestricted:false,requireTogether:false},seats:{visible:4,detailed:4,groups:1,singletonCount:3,explicitRowBounds:true}});
   assert.equal(result.canStart,true);
   const singleton=result.checks.find(c=>c.id==='singleton-seats');assert.equal(singleton.level,'warning');
   assert.match(singleton.title,/3개 · 1매만 지원/);assert.match(singleton.detail,/현재 매수 설정에서는/);assert.match(singleton.detail,/숫자 열 범위/);
   assert.match(result.checks.find(c=>c.id==='dispersed-seats').detail,/부족한 수만 다음 순위/);
 });
 test('preflight treats checked, unavailable and unverified automatic progress distinctly',()=>{
-  const base={connected:true,target:true,pageStage:'seat',networkHealthy:true,extensionVersion:'0.9.28'};
+  const base={connected:true,target:true,pageStage:'seat',networkHealthy:true,extensionVersion:'0.9.29'};
   assert.equal(buildPreflight({...base,httpCapability:{supported:true}}).checks.find(c=>c.id==='http-capability').level,'ok');
   const blocked=buildPreflight({...base,httpCapability:{supported:false,code:'HTTP_CONTEXT_SYNC_UNAVAILABLE'}});
   assert.equal(blocked.canStart,false);assert.match(blocked.checks.find(c=>c.id==='http-capability').detail,/선택 결과를 연결/);
@@ -75,7 +75,7 @@ test('failure text can never claim a verified price screen, while explicit compl
 test('price diagnostics describe standard-price criteria and point to logged decisions',()=>{
   const diagnosis=diagnosisForRun({failureDetail:'일반 가격 없음 [STANDARD_PRICE_UNAVAILABLE]'});
   assert.equal(diagnosis.code,'price-selection');assert.match(diagnosis.detail,/좌석 등급별 가격/);assert.match(diagnosis.nextAction,/price-selection/);
-  const scope=buildPreflight({connected:true,target:true,pageStage:'seat',networkHealthy:true,extensionVersion:'0.9.28',httpCapability:{supported:true}}).checks.find(c=>c.id==='scope');
+  const scope=buildPreflight({connected:true,target:true,pageStage:'seat',networkHealthy:true,extensionVersion:'0.9.29',httpCapability:{supported:true}}).checks.find(c=>c.id==='scope');
   assert.match(scope.detail,/조건을 충족하는 첫 일반 가격/);assert.doesNotMatch(scope.detail,/성인/);
   assert.match(diagnosisForRun({outcome:'booking-advanced'}).detail,/일반 가격/);
 });

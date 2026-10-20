@@ -113,52 +113,86 @@ const classifyEntryResponse=function classifyEntryResponse(status,body){
     try{const u=new URL(data.redirectUrl);if(u.origin==='https://tickets.interpark.com'&&!u.username&&!u.password&&!u.hash&&!/\/(?:error|fail)(?:\/|$)/i.test(u.pathname)&&!u.searchParams.has('errorCode')&&!u.searchParams.has('error')&&/^\/(?:waiting(?:\/|$)|onestop(?:\/|$))/.test(u.pathname))return {outcome:'redirect-ready',code:'VALID_REDIRECT'};}catch{}
     return {outcome:'unknown',code:'INVALID_REDIRECT'};
   }
-  // P40057 is the published onestop PRODUCT_NOT_OPEN code. Only an explicit
-  // rejection carrying that exact code qualifies; never infer it from HTTP 403.
-  // Its occurrence on secure-url has not yet been observed in a live opening.
   if(status>=400&&status<500&&![401,429].includes(status)&&code==='P40057'&&!data.redirectUrl)return {outcome:'not-open',code};
   return {outcome:status>=400&&status<500?'blocked':'unknown',code:code||'UNCLASSIFIED_RESPONSE'};
 };
-const createEntryHttp=function createEntryHttp({assertActive,onStatus=()=>{},beforeSend=null}){
-  const original=window.fetch;let stopped=false,claimed=false,task=null,requestBody,requestMethod;
+const createEntryHttp=function createEntryHttp({assertActive,onStatus=()=>{},beforeSend=null,getWindow=null}){
+  const original=window.fetch,controllers=new Set(),timers=new Set();
+  let stopped=false,claimed=false,task=null,body=null,cancel=null;
   const status={outcome:'waiting',requestCount:0,code:null,httpStatus:null};
   const report=patch=>{Object.assign(status,patch);onStatus({...status});};
   const active=()=>{if(stopped)throw Error('SITE_CODE_STOPPED');assertActive();};
   const restore=()=>{if(window.fetch===wrapped)window.fetch=original;};
+  const cleanup=()=>{for(const id of timers)clearTimeout(id);timers.clear();for(const c of controllers)c.abort();controllers.clear();};
+  const later=(fn,ms)=>{const id=setTimeout(()=>{timers.delete(id);fn();},Math.max(0,ms));timers.add(id);return id;};
   const wrapped=function(input,init){
     let u;try{u=new URL(typeof input==='string'?input:input?.url,location.href);}catch{return original.call(this,input,init);}
     if(u.origin!=='https://ent-waiting-api.interpark.com'||u.pathname!=='/waiting/api/secure-url')return original.call(this,input,init);
-    if(claimed){
-      if(init?.body!==requestBody||init?.method!==requestMethod)return Promise.reject(Error('SITE_ENTRY_REQUEST_CONFLICT'));
-      return task.then(response=>{active();return response.clone();});
-    }
-    claimed=true;requestBody=init?.body;requestMethod=init?.method;
-    // Defer execution until task is assigned, so synchronous observers cannot
-    // re-enter the wrapper while its shared promise is still null.
-    task=Promise.resolve().then(async()=>{
+    try{
       active();
       if(init?.method!=='POST'||typeof init.body!=='string'||init.body.length>65536||input instanceof Request)throw Error('SITE_ENTRY_REQUEST_UNSUPPORTED');
       let payload;try{payload=JSON.parse(init.body);}catch{throw Error('SITE_ENTRY_REQUEST_UNSUPPORTED');}
       if(typeof payload.signature!=='string'||!payload.signature||typeof payload.secureData!=='string'||!payload.secureData)throw Error('SITE_ENTRY_REQUEST_UNSUPPORTED');
-      if(beforeSend){report({outcome:'scheduled',preparedMono:performance.now()});await beforeSend();active();}
-      report({outcome:'pending',requestCount:1,startedMono:performance.now()});
-      let response,body;
-      try{
-        response=await original.call(window,input,{...init,redirect:'error',signal:AbortSignal.any([AbortSignal.timeout(30000),...(init.signal?[init.signal]:[])])});
-        body=await response.clone().text();
-      }catch(error){report({outcome:'unknown',code:'NETWORK_OUTCOME_UNKNOWN',finishedMono:performance.now()});throw error;}
-      active();
-      const result=classifyEntryResponse(response.status,body);
-      report({...result,httpStatus:response.status,finishedMono:performance.now()});
-      if(result.outcome==='redirect-ready')return response;
-      // P40057 is not yet a verified secure-url retry contract. Do not infer
-      // permission to reuse a signed body from a code seen on another endpoint.
-      throw Error('SITE_ENTRY_RESPONSE_REJECTED');
-    }).catch(error=>{if(status.outcome==='waiting')report({outcome:'unknown',code:'REQUEST_NOT_SENT'});throw error;});
+      if(claimed&&init.body!==body)throw Error('SITE_ENTRY_REQUEST_CONFLICT');
+    }catch(e){return Promise.reject(e);}
+    if(!claimed){
+      claimed=true;body=init.body;
+      const frozen={...init,headers:new Headers(init.headers),redirect:'error'};
+      task=new Promise((resolve,reject)=>{
+        let settled=false,inFlight=0,closed=false,win=null;
+        const finish=(error,response,patch)=>{
+          if(settled)return;settled=true;cleanup();frozen.signal?.removeEventListener('abort',cancel);
+          if(patch)report({...patch,finishedMono:performance.now()});
+          if(error)reject(error);else resolve(response);
+        };
+        cancel=()=>finish(Error('SITE_CODE_STOPPED'),null,{outcome:'stopped',code:'CANCELLED'});
+        const expire=()=>finish(Error('SITE_ENTRY_WINDOW_EXPIRED'),null,{outcome:'expired',code:'RETRY_WINDOW_EXPIRED'});
+        const fire=async()=>{
+          if(settled)return;
+          try{active();}catch(e){finish(e,null,{outcome:'stopped',code:'CANCELLED'});return;}
+          if(win&&performance.now()>win.endMono){closed=true;if(!inFlight)expire();return;}
+          const controller=new AbortController();controllers.add(controller);inFlight++;
+          const timeout=later(()=>controller.abort(),8000),now=performance.now();
+          report({outcome:'pending',requestCount:status.requestCount+1,startedMono:status.startedMono??now,lastAttemptMono:now});
+          try{
+            const response=await original.call(window,input,{...frozen,signal:controller.signal});
+            const text=await response.clone().text();if(settled)return;active();
+            let result=classifyEntryResponse(response.status,text);
+            if(response.headers?.get('retry-after')!=null)result={outcome:'blocked',code:'RETRY_AFTER'};
+            if(result.outcome==='redirect-ready'){controllers.delete(controller);finish(null,response,{...result,httpStatus:response.status});return;}
+            const transient=result.outcome==='not-open'||response.status>=500&&response.status<=599&&result.code!=='RETRY_AFTER'&&!/blacklist/i.test(result.code||'');
+            if(!win||!transient){finish(Error('SITE_ENTRY_RESPONSE_REJECTED'),null,{...result,httpStatus:response.status});return;}
+            report({outcome:'pending',lastErrorCode:result.code,httpStatus:response.status});
+          }catch(error){if(!settled)finish(error,null,{outcome:'unknown',code:'NETWORK_OUTCOME_UNKNOWN'});}
+          finally{clearTimeout(timeout);timers.delete(timeout);controllers.delete(controller);inFlight--;if(!settled&&closed&&!inFlight)expire();}
+        };
+        const tick=()=>{
+          if(settled)return;
+          const now=performance.now();
+          if(now>win.endMono){closed=true;if(!inFlight)expire();return;}
+          if(now<win.startMono){later(tick,win.startMono-now);return;}
+          void fire();
+          if(settled)return;
+          const next=win.startMono+(Math.floor((now-win.startMono)/30)+1)*30;
+          later(tick,(next<=win.endMono?next:win.endMono+1)-performance.now());
+        };
+        Promise.resolve().then(async()=>{
+          active();if(frozen.signal?.aborted)throw Error('SITE_CODE_STOPPED');
+          frozen.signal?.addEventListener('abort',cancel,{once:true});
+          if(beforeSend){report({outcome:'scheduled',preparedMono:performance.now()});await beforeSend();}
+          if(settled)return;active();
+          if(getWindow){
+            win=getWindow();
+            if(!win||![win.startMono,win.endMono].every(Number.isFinite)||win.endMono<win.startMono||win.endMono-win.startMono>4000)throw Error('SITE_ENTRY_WINDOW_INVALID');
+            later(expire,win.endMono+8000-performance.now());tick();
+          }else void fire();
+        }).catch(error=>{if(!settled)finish(error,null,{outcome:'unknown',code:'REQUEST_NOT_SENT'});});
+      });
+    }
     return task.then(response=>{active();return response.clone();});
   };
   window.fetch=wrapped;
-  return {status,dispose:restore,stop(){stopped=true;restore();},get claimed(){return claimed;}};
+  return {status,dispose:restore,stop(){stopped=true;cancel?.();cleanup();restore();},get claimed(){return claimed;}};
 };
 const makeActions=siteInvoke=>{
 const priceState=function priceState(){
@@ -338,7 +372,7 @@ return {
   status.reason=blocked?'안내/인증/처리가 끝나기를 기다립니다.':status.enabled?'사이트가 예매 버튼을 활성화했습니다.':'사이트의 예매 버튼 활성화를 기다립니다.';
   return status;
 },
-"entry.armGate":function armGate({goodsCode,runId=null,timeoutMs=15*86400000,httpRetry=false,allowInitiallyEnabled=false}={}) {
+"entry.armGate":function armGate({goodsCode,runId=null,timeoutMs=15*86400000,httpRetry=false,allowInitiallyEnabled=false,preWindowMs=2000,postWindowMs=2000,intervalMs=30}={}) {
   // Kept self-contained for execution in the isolated browser world.
   const match=location.origin==='https://tickets.interpark.com'&&location.pathname.match(/^\/gates\/ticket\/(\d{8})$/);
   if(!match||!goodsCode||String(goodsCode)!==match[1])throw new Error('대상 경기의 준비 화면을 확인하지 못했습니다.');
@@ -348,11 +382,17 @@ return {
   const startPath=location.pathname,started=performance.now();
   const status={phase:'armed',documentId:String(performance.timeOrigin)+':'+started,goodsCode:String(goodsCode),runId,clickedAt:null,trigger:null,observedDisabled:false,clock:{outcome:'not-configured'},reason:'사이트의 예매 버튼 활성화를 기다립니다.'};
   let observer,timer,clockTimer,http,pendingDispatch,done=false,inFlight=false,retryAt=0,attempts=0;
+  const getWindow=()=>{
+    const d=status.clock?.deadlineMono;
+    if(!Number.isFinite(d))return {startMono:NaN,endMono:NaN};
+    return {startMono:d-(httpRetry?preWindowMs:0),endMono:d+(httpRetry?postWindowMs:0),intervalMs};
+  };
   const stop=()=>{done=true;clearTimeout(timer);clearTimeout(clockTimer);observer?.disconnect();http?.stop();if(pendingDispatch){const pending=pendingDispatch;pendingDispatch=null;pending.reject(Error('SITE_CODE_STOPPED'));}if(['armed','http-running'].includes(status.phase))status.phase='stopped';};
   const releaseDispatch=()=>{
     if(!pendingDispatch||done)return;
-    const now=performance.now(),clock=status.clock;
-    if(!Number.isFinite(clock.deadlineMono)||now<clock.deadlineMono||now>clock.validUntilMono)return;
+    const now=performance.now(),clock=status.clock,{startMono,endMono}=getWindow();
+    if(!Number.isFinite(clock.deadlineMono)||now<startMono||now>clock.validUntilMono)return;
+    if(now>endMono){status.phase='timeout';stop();return;}
     if(location.origin!=='https://tickets.interpark.com'||location.pathname!==startPath){stop();return;}
     const pending=pendingDispatch;pendingDispatch=null;
     status.trigger='server-clock';status.clock.outcome='clicked';pending.resolve();
@@ -377,43 +417,39 @@ return {
         status.entryContract=resolveGateEntry(button).contract;status.entryReady=true;delete status.entryCode;
       }catch(error){status.entryReady=false;status.entryCode=/^SITE_[A-Z_]+$/.test(error?.message||'')?error.message:'SITE_ENTRY_FUNCTION_UNAVAILABLE';}
     }
-    const now=performance.now(),firstAt=status.clock.deadlineMono;
-    const configured=Number.isFinite(firstAt),clockValid=configured&&now<=status.clock.validUntilMono;
+    const now=performance.now(),deadlineMono=status.clock.deadlineMono,{startMono,endMono}=getWindow();
+    const configured=Number.isFinite(deadlineMono),clockValid=configured&&now<=status.clock.validUntilMono;
     if(configured&&!clockValid)status.clock.outcome='stale';
+    if(httpRetry&&configured&&now>endMono){status.phase='timeout';status.reason='설정한 진입 시도 구간이 지났습니다.';stop();return;}
     if(httpRetry&&!clockValid){status.reason='유효한 서버 시각 설정을 기다립니다.';timer=setTimeout(tick,250);return;}
-    if(clockValid&&now<firstAt){timer=setTimeout(tick,Math.min(250,firstAt-now));return;}
+    if(clockValid&&now<startMono){timer=setTimeout(tick,Math.min(250,startMono-now));return;}
     if(httpRetry&&http?.claimed){releaseDispatch();return;}
     if(httpRetry&&button&&!blocked){
       if(!status.entryReady){status.phase='blocked';status.reason='정시 진입 함수를 확인하지 못했습니다. ['+status.entryCode+']';stop();return;}
-      // The original callback performs all authenticated entry checks. Only
-      // its outer UI/countdown wrapper is omitted, and the runtime rechecks
-      // the committed callback plus the connection lease at invocation.
-      status.phase='clicked';status.trigger='server-clock';status.clickedAt=Date.now();status.clickedMono=performance.now();
-      status.invokeDelayMs=Math.max(0,status.clickedMono-firstAt);status.attempts=++attempts;
-      status.clock.outcome='clicked';status.reason='예약 시각 도달 · 사이트의 원래 진입 API 함수 실행';
+      status.phase='clicked';status.trigger='server-clock';status.clickedAt??=Date.now();status.clickedMono??=performance.now();
+      status.invokeDelayMs=Math.max(0,status.clickedMono-startMono);status.attempts=++attempts;
+      status.clock.outcome='clicked';status.reason='예약 구간 도달(±2초) · 30ms 간격으로 진입 API 호출 중';
       clearTimeout(timer);clearTimeout(clockTimer);observer?.disconnect();inFlight=true;
-      const failed=()=>{inFlight=false;if(done||http?.claimed)return;status.phase='blocked';status.reason='정시 진입 함수가 API 요청을 만들지 못했습니다. 인증·상품 상태를 확인해 주세요.';stop();};
+      const retryOrFail=()=>{
+        inFlight=false;if(done||http?.claimed)return;
+        status.phase='blocked';status.reason='정시 진입 함수가 예약 구간 동안 API 요청을 만들지 못했습니다. 인증·상품 상태를 확인해 주세요.';stop();
+      };
       try{
         Promise.resolve(siteInvoke(button,'scheduled-entry')).then(()=>{
-          inFlight=false;if(done||http?.claimed)return;failed();
-        }).catch(failed);
-      }catch{failed();}
+          inFlight=false;if(done||http?.claimed)return;retryOrFail();
+        }).catch(retryOrFail);
+      }catch{retryOrFail();}
       return;
     }
     if(button&&!blocked&&!button.disabled&&button.getAttribute('aria-disabled')!=='true'&&button.textContent.trim()==='예매하기'&&(status.observedDisabled||allowInitiallyEnabled)){
-      // Both triggers acquire this latch synchronously, before dispatching.
-      // A delivered DOM click is not evidence of an accepted server request.
       status.enabledObservedMono??=performance.now();status.phase='clicked';status.trigger=source==='server-clock'?'server-clock':'activation';status.clickedAt=Date.now();status.clickedMono=performance.now();status.invokeDelayMs=status.clickedMono-status.enabledObservedMono;status.attempts=++attempts;
       if(status.trigger==='server-clock')status.clock.outcome='clicked';status.reason='활성화 확인 · 사이트 진입 함수 실행';
       clearTimeout(timer);clearTimeout(clockTimer);inFlight=true;
       if(!http){stop();siteInvoke(button);return;}
-      // If the site's guard returned without issuing any request, retry the
-      // current handler after its cooldown. The HTTP guard stays installed so
-      // delayed/automatic paths cannot create another network operation.
       Promise.resolve().then(()=>siteInvoke(button)).then(()=>{
         inFlight=false;if(done||http.claimed)return;
         if(attempts>=3){status.phase='blocked';status.reason='사이트 함수 실행 후 진입 요청이 발생하지 않았습니다.';stop();return;}
-        retryAt=performance.now()+1000;status.phase='armed';status.reason='진입 요청 미발생 · 사이트 잠금 해제 후 재확인';timer=setTimeout(tick,1000);
+        retryAt=performance.now()+1000;status.phase='armed';status.reason='진입 요청 미발생 · 1초 후 재시도';timer=setTimeout(tick,1000);
       }).catch(()=>{inFlight=false;if(done)return;status.phase='blocked';status.reason='사이트 진입 함수 실행 결과를 확인하지 못했습니다.';stop();});return;
     }
     status.reason=!prepared||buttons.length!==1?'확인된 준비 화면과 예매 버튼을 기다립니다.':blocked?'안내/인증/처리가 끝나기를 기다립니다.':!status.observedDisabled?'처음부터 활성화된 버튼에는 중복 클릭하지 않고 사이트의 자동 진행을 기다립니다.':'사이트의 예매 버튼 활성화를 기다립니다.';
@@ -423,13 +459,13 @@ return {
   const setClock=config=>{
     if(done||status.clock.firedAtMono!=null&&status.clock.outcome!=='stale'||config?.runId!==runId||config.documentId!==status.documentId||String(config?.goodsCode)!==String(goodsCode))return false;
     const {deadlineMono,validUntilMono,uncertaintyMs,openAt}=config;
-    if(config.source!=='ticket-server'||![deadlineMono,validUntilMono,uncertaintyMs,openAt].every(Number.isFinite)||uncertaintyMs<0||uncertaintyMs>501||validUntilMono<deadlineMono)return false;
+    if(config.source!=='ticket-server'||![deadlineMono,validUntilMono,uncertaintyMs,openAt].every(Number.isFinite)||uncertaintyMs<0||uncertaintyMs>501||validUntilMono<deadlineMono+(httpRetry?postWindowMs:0))return false;
     clearTimeout(clockTimer);const clock={outcome:'armed',deadlineMono,validUntilMono,uncertaintyMs,openAt};status.clock=clock;
     const fire=()=>{
       if(done||status.clock!==clock)return;
       const now=performance.now();
       if(now>validUntilMono){status.clock.outcome='stale';return;}
-      const firstAt=deadlineMono;
+      const firstAt=deadlineMono-(httpRetry?preWindowMs:0);
       if(now<firstAt){clockTimer=setTimeout(fire,Math.ceil(firstAt-now));return;}
       status.clock.firedAtMono=now;status.clock.delayMs=now-firstAt;
       status.clock.outcome='not-ready';tick('server-clock');
@@ -438,11 +474,17 @@ return {
   };
   if(typeof createEntryHttp==='function'){
     const control=window.__ticketSiteCode,epoch=control?.epoch;
-    http=createEntryHttp({assertActive:()=>{if(done||location.pathname!==startPath||control&&(window.__ticketSiteCode!==control||control.epoch!==epoch||control.stopped||Date.now()>control.leaseUntil))throw Error('SITE_CODE_STOPPED');},beforeSend:httpRetry?()=>new Promise((resolve,reject)=>{pendingDispatch={resolve,reject};releaseDispatch();}):null,onStatus:value=>{
-      status.http=value;if(value.requestCount){status.phase='http-running';clearTimeout(timer);clearTimeout(clockTimer);observer?.disconnect();}
-      if(Number.isFinite(value.startedMono)&&Number.isFinite(status.clickedMono))status.requestDelayMs=Math.max(0,value.startedMono-status.clickedMono);
-      if(Number.isFinite(value.startedMono)&&Number.isFinite(status.clock.deadlineMono))status.requestDeadlineDelayMs=value.startedMono-status.clock.deadlineMono;
-    }});
+    http=createEntryHttp({
+      assertActive:()=>{if(done||location.pathname!==startPath||control&&(window.__ticketSiteCode!==control||control.epoch!==epoch||control.stopped||Date.now()>control.leaseUntil))throw Error('SITE_CODE_STOPPED');},
+      beforeSend:httpRetry?()=>new Promise((resolve,reject)=>{pendingDispatch={resolve,reject};releaseDispatch();}):null,
+      getWindow:httpRetry?getWindow:null,
+      intervalMs,
+      onStatus:value=>{
+        status.http=value;if(value.requestCount){status.phase='http-running';clearTimeout(timer);clearTimeout(clockTimer);observer?.disconnect();}
+        if(Number.isFinite(value.startedMono)&&Number.isFinite(status.clickedMono))status.requestDelayMs=Math.max(0,value.startedMono-status.clickedMono);
+        if(Number.isFinite(value.startedMono)&&Number.isFinite(status.clock.deadlineMono))status.requestDeadlineDelayMs=value.startedMono-status.clock.deadlineMono;
+      }
+    });
   }
   window.__bearsGate={status,stop,setClock,requestObserved(){if(done||http?.claimed)return;status.phase='request-observed';status.reason='사이트의 진입 요청을 관찰했습니다.';stop();}};tick();return status;
 },

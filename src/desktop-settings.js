@@ -20,8 +20,8 @@ function windowBounds(value){
 function entrySettings(input={}, {strict=false}={}){
   const strategy=input?.entryStrategy,offset=input?.entryOffsetMs;
   if(strict&&strategy!==undefined&&!['site','clock'].includes(strategy))throw Error('진입 방식을 다시 선택해 주세요.');
-  if(strict&&offset!==undefined&&(!Number.isInteger(offset)||offset < -250||offset > 250))throw Error('진입 시각 보정은 -250~250ms 범위의 정수로 입력해 주세요.');
-  return {entryStrategy:strategy==='clock'?'clock':'site',entryOffsetMs:Number.isInteger(offset)&&offset>=-250&&offset<=250?offset:0};
+  if(strict&&offset!==undefined&&(!Number.isInteger(offset)||offset < -3000||offset > 3000))throw Error('진입 시각 보정은 -3000~3000ms 범위의 정수로 입력해 주세요.');
+  return {entryStrategy:strategy==='clock'?'clock':'site',entryOffsetMs:Number.isInteger(offset)&&offset>=-3000&&offset<=3000?offset:0};
 }
 function cleanSettings(input={}){
   return {pageUrl:entryUrl(input.pageUrl)||POSTSEASON,favoriteTeam:'삼성 라이온즈',alwaysOnTop:input.alwaysOnTop!==false,...entrySettings(input),...(windowBounds(input.windowBounds)?{windowBounds:windowBounds(input.windowBounds)}:{})};

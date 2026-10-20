@@ -14,7 +14,7 @@ function fixture(respond,{end=2000,start=0}={}){
   let mono=0,active=true,id=0;const timers=new Map(),calls=[],statuses=[];
   const original=async(...args)=>{calls.push({mono,args});return respond(calls.length);};
   const window={fetch:original};
-  const ctx=vm.createContext({window,location:{href:'https://tickets.interpark.com/gates/ticket/26014421'},URL,Headers,Request,AbortSignal,performance:{now:()=>mono},setTimeout:(fn,ms)=>{timers.set(++id,{fn,at:mono+ms});return id;},clearTimeout:n=>timers.delete(n),assertActive:()=>{if(!active)throw Error('stopped');},onStatus:s=>statuses.push(s)});
+  const ctx=vm.createContext({window,location:{href:'https://tickets.interpark.com/gates/ticket/26014421'},URL,Headers,Request,AbortSignal,AbortController,performance:{now:()=>mono},setTimeout:(fn,ms)=>{timers.set(++id,{fn,at:mono+ms});return id;},clearTimeout:n=>timers.delete(n),assertActive:()=>{if(!active)throw Error('stopped');},onStatus:s=>statuses.push(s)});
   vm.runInContext(`const classifyEntryResponse=${classifyEntryResponse};const createEntryHttp=${createEntryHttp};globalThis.engine=createEntryHttp({startMono:${start},endMono:${end},assertActive,onStatus});`,ctx);
   const settle=async()=>{for(let i=0;i<15;i++)await Promise.resolve();await new Promise(r=>setImmediate(r));};
   return {window,original,calls,statuses,engine:ctx.engine,settle,async advance(value){mono=value;for(const [key,t] of [...timers])if(t.at<=mono){timers.delete(key);t.fn();}await settle();},deactivate:()=>{active=false;},request:()=>window.fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({signature:'test',secureData:'test'})})};

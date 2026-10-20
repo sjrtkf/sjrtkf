@@ -1,7 +1,7 @@
 'use strict';
 const fs=require('node:fs'),path=require('node:path');
 const root=path.resolve(__dirname,'..'),version=require('../package.json').version.replace(/\.0$/,'');
-const appName=`BaseballTicketHelper-v${version}`,output=path.join(root,'outputs',`${appName}-win32-x64`);
+const appName=`BaseballTicketHelper-v${version}`,output=path.join(process.env.TICKET_PACKAGE_OUT?path.resolve(process.env.TICKET_PACKAGE_OUT):path.join(root,'outputs'),`${appName}-win32-x64`);
 if(!fs.existsSync(path.join(output,`${appName}.exe`)))throw Error('패키징된 실행 파일이 없습니다.');
 const destination=path.join(output,'chrome-extension');fs.mkdirSync(destination,{recursive:true});
 for(const entry of fs.readdirSync(path.join(root,'extension'),{withFileTypes:true})){

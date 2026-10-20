@@ -10,54 +10,88 @@ function classifyEntryResponse(status,body){
     try{const u=new URL(data.redirectUrl);if(u.origin==='https://tickets.interpark.com'&&!u.username&&!u.password&&!u.hash&&!/\/(?:error|fail)(?:\/|$)/i.test(u.pathname)&&!u.searchParams.has('errorCode')&&!u.searchParams.has('error')&&/^\/(?:waiting(?:\/|$)|onestop(?:\/|$))/.test(u.pathname))return {outcome:'redirect-ready',code:'VALID_REDIRECT'};}catch{}
     return {outcome:'unknown',code:'INVALID_REDIRECT'};
   }
-  // P40057 is the published onestop PRODUCT_NOT_OPEN code. Only an explicit
-  // rejection carrying that exact code qualifies; never infer it from HTTP 403.
-  // Its occurrence on secure-url has not yet been observed in a live opening.
   if(status>=400&&status<500&&![401,429].includes(status)&&code==='P40057'&&!data.redirectUrl)return {outcome:'not-open',code};
   return {outcome:status>=400&&status<500?'blocked':'unknown',code:code||'UNCLASSIFIED_RESPONSE'};
 }
 
-// Guard one operation per document/run. Never replay a signed request. Multiple
-// local callers share the same result, including a rejection or unknown outcome.
-function createEntryHttp({assertActive,onStatus=()=>{},beforeSend=null}){
-  const original=window.fetch;let stopped=false,claimed=false,task=null,requestBody,requestMethod;
+// Scheduled retries use fixed monotonic slots. The original signed operation is
+// frozen: this does not regenerate a signature or bypass the site's guards.
+function createEntryHttp({assertActive,onStatus=()=>{},beforeSend=null,getWindow=null}){
+  const original=window.fetch,controllers=new Set(),timers=new Set();
+  let stopped=false,claimed=false,task=null,body=null,cancel=null;
   const status={outcome:'waiting',requestCount:0,code:null,httpStatus:null};
   const report=patch=>{Object.assign(status,patch);onStatus({...status});};
   const active=()=>{if(stopped)throw Error('SITE_CODE_STOPPED');assertActive();};
   const restore=()=>{if(window.fetch===wrapped)window.fetch=original;};
+  const cleanup=()=>{for(const id of timers)clearTimeout(id);timers.clear();for(const c of controllers)c.abort();controllers.clear();};
+  const later=(fn,ms)=>{const id=setTimeout(()=>{timers.delete(id);fn();},Math.max(0,ms));timers.add(id);return id;};
   const wrapped=function(input,init){
     let u;try{u=new URL(typeof input==='string'?input:input?.url,location.href);}catch{return original.call(this,input,init);}
     if(u.origin!=='https://ent-waiting-api.interpark.com'||u.pathname!=='/waiting/api/secure-url')return original.call(this,input,init);
-    if(claimed){
-      if(init?.body!==requestBody||init?.method!==requestMethod)return Promise.reject(Error('SITE_ENTRY_REQUEST_CONFLICT'));
-      return task.then(response=>{active();return response.clone();});
-    }
-    claimed=true;requestBody=init?.body;requestMethod=init?.method;
-    // Defer execution until task is assigned, so synchronous observers cannot
-    // re-enter the wrapper while its shared promise is still null.
-    task=Promise.resolve().then(async()=>{
+    try{
       active();
       if(init?.method!=='POST'||typeof init.body!=='string'||init.body.length>65536||input instanceof Request)throw Error('SITE_ENTRY_REQUEST_UNSUPPORTED');
       let payload;try{payload=JSON.parse(init.body);}catch{throw Error('SITE_ENTRY_REQUEST_UNSUPPORTED');}
       if(typeof payload.signature!=='string'||!payload.signature||typeof payload.secureData!=='string'||!payload.secureData)throw Error('SITE_ENTRY_REQUEST_UNSUPPORTED');
-      if(beforeSend){report({outcome:'scheduled',preparedMono:performance.now()});await beforeSend();active();}
-      report({outcome:'pending',requestCount:1,startedMono:performance.now()});
-      let response,body;
-      try{
-        response=await original.call(window,input,{...init,redirect:'error',signal:AbortSignal.any([AbortSignal.timeout(30000),...(init.signal?[init.signal]:[])])});
-        body=await response.clone().text();
-      }catch(error){report({outcome:'unknown',code:'NETWORK_OUTCOME_UNKNOWN',finishedMono:performance.now()});throw error;}
-      active();
-      const result=classifyEntryResponse(response.status,body);
-      report({...result,httpStatus:response.status,finishedMono:performance.now()});
-      if(result.outcome==='redirect-ready')return response;
-      // P40057 is not yet a verified secure-url retry contract. Do not infer
-      // permission to reuse a signed body from a code seen on another endpoint.
-      throw Error('SITE_ENTRY_RESPONSE_REJECTED');
-    }).catch(error=>{if(status.outcome==='waiting')report({outcome:'unknown',code:'REQUEST_NOT_SENT'});throw error;});
+      if(claimed&&init.body!==body)throw Error('SITE_ENTRY_REQUEST_CONFLICT');
+    }catch(e){return Promise.reject(e);}
+    if(!claimed){
+      claimed=true;body=init.body;
+      const frozen={...init,headers:new Headers(init.headers),redirect:'error'};
+      task=new Promise((resolve,reject)=>{
+        let settled=false,inFlight=0,closed=false,win=null;
+        const finish=(error,response,patch)=>{
+          if(settled)return;settled=true;cleanup();frozen.signal?.removeEventListener('abort',cancel);
+          if(patch)report({...patch,finishedMono:performance.now()});
+          if(error)reject(error);else resolve(response);
+        };
+        cancel=()=>finish(Error('SITE_CODE_STOPPED'),null,{outcome:'stopped',code:'CANCELLED'});
+        const expire=()=>finish(Error('SITE_ENTRY_WINDOW_EXPIRED'),null,{outcome:'expired',code:'RETRY_WINDOW_EXPIRED'});
+        const fire=async()=>{
+          if(settled)return;
+          try{active();}catch(e){finish(e,null,{outcome:'stopped',code:'CANCELLED'});return;}
+          if(win&&performance.now()>win.endMono){closed=true;if(!inFlight)expire();return;}
+          const controller=new AbortController();controllers.add(controller);inFlight++;
+          const timeout=later(()=>controller.abort(),8000),now=performance.now();
+          report({outcome:'pending',requestCount:status.requestCount+1,startedMono:status.startedMono??now,lastAttemptMono:now});
+          try{
+            const response=await original.call(window,input,{...frozen,signal:controller.signal});
+            const text=await response.clone().text();if(settled)return;active();
+            let result=classifyEntryResponse(response.status,text);
+            if(response.headers?.get('retry-after')!=null)result={outcome:'blocked',code:'RETRY_AFTER'};
+            if(result.outcome==='redirect-ready'){controllers.delete(controller);finish(null,response,{...result,httpStatus:response.status});return;}
+            const transient=result.outcome==='not-open'||response.status>=500&&response.status<=599&&result.code!=='RETRY_AFTER'&&!/blacklist/i.test(result.code||'');
+            if(!win||!transient){finish(Error('SITE_ENTRY_RESPONSE_REJECTED'),null,{...result,httpStatus:response.status});return;}
+            report({outcome:'pending',lastErrorCode:result.code,httpStatus:response.status});
+          }catch(error){if(!settled)finish(error,null,{outcome:'unknown',code:'NETWORK_OUTCOME_UNKNOWN'});}
+          finally{clearTimeout(timeout);timers.delete(timeout);controllers.delete(controller);inFlight--;if(!settled&&closed&&!inFlight)expire();}
+        };
+        const tick=()=>{
+          if(settled)return;
+          const now=performance.now();
+          if(now>win.endMono){closed=true;if(!inFlight)expire();return;}
+          if(now<win.startMono){later(tick,win.startMono-now);return;}
+          void fire();
+          if(settled)return;
+          const next=win.startMono+(Math.floor((now-win.startMono)/30)+1)*30;
+          later(tick,(next<=win.endMono?next:win.endMono+1)-performance.now());
+        };
+        Promise.resolve().then(async()=>{
+          active();if(frozen.signal?.aborted)throw Error('SITE_CODE_STOPPED');
+          frozen.signal?.addEventListener('abort',cancel,{once:true});
+          if(beforeSend){report({outcome:'scheduled',preparedMono:performance.now()});await beforeSend();}
+          if(settled)return;active();
+          if(getWindow){
+            win=getWindow();
+            if(!win||![win.startMono,win.endMono].every(Number.isFinite)||win.endMono<win.startMono||win.endMono-win.startMono>4000)throw Error('SITE_ENTRY_WINDOW_INVALID');
+            later(expire,win.endMono+8000-performance.now());tick();
+          }else void fire();
+        }).catch(error=>{if(!settled)finish(error,null,{outcome:'unknown',code:'REQUEST_NOT_SENT'});});
+      });
+    }
     return task.then(response=>{active();return response.clone();});
   };
   window.fetch=wrapped;
-  return {status,dispose:restore,stop(){stopped=true;restore();},get claimed(){return claimed;}};
+  return {status,dispose:restore,stop(){stopped=true;cancel?.();cleanup();restore();},get claimed(){return claimed;}};
 }
 module.exports={classifyEntryResponse,createEntryHttp};

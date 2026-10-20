@@ -42,7 +42,7 @@ function fixture(){
   const config=overrides=>({runId:RUN,goodsCode:GOODS,documentId:context.window.__bearsGate?.status.documentId,source:'ticket-server',deadlineMono:100,validUntilMono:1000,uncertaintyMs:20,openAt:1789700000100,...overrides});
   return {
     context,document,button,main,timers,observers,invocations,run,advance,activate,notify,config,
-    arm:(options={})=>run(entry.armGate,{goodsCode:GOODS,runId:RUN,...options}),
+    arm:(options={})=>run(entry.armGate,{goodsCode:GOODS,runId:RUN,preWindowMs:0,postWindowMs:0,...options}),
     clock:(options={})=>run(entry.setGateClock,config(options)),
     clicks:()=>clicks,attributeWrites:()=>attributeWrites,now:()=>mono,
     jumpWall:value=>{wall=value;},elapseWithoutTasks:value=>{assert.ok(value>=mono);mono=value;}
@@ -170,15 +170,14 @@ test('예약 진입은 활성화된 준비 버튼도 최근 서버 시각과 시
   f.advance(100);f.notify();assert.equal(f.clicks(),1);assert.equal(status.trigger,'server-clock');
 });
 
-test('예약 진입의 시각이 실행 전 또는 모달 대기 중 만료되면 새 보정 전까지 실행을 보류한다',()=>{
+test('예약 구간 종료 후 실행 전 또는 모달 대기였더라도 새 요청 없이 종료한다',()=>{
   for(const deadlineFired of [false,true]){
     const f=fixture(),status=f.arm({httpRetry:true});f.clock({validUntilMono:150});
     if(deadlineFired){f.document.modal=true;f.advance(100);}
     f.elapseWithoutTasks(200);f.advance(200);f.activate();f.document.modal=false;f.notify();
-    assert.equal(status.clock.outcome,'stale');assert.equal(status.phase,'armed');assert.equal(f.clicks(),0);
-    assert.equal(f.clock({deadlineMono:300,validUntilMono:1000}),true);
-    f.advance(299);f.notify();assert.equal(f.clicks(),0);
-    f.advance(300);assert.equal(f.clicks(),1);assert.equal(status.clickedMono,300);
+    assert.equal(status.clock.outcome,'stale');assert.equal(status.phase,'timeout');assert.equal(f.clicks(),0);
+    assert.equal(f.clock({deadlineMono:300,validUntilMono:1000}),false);
+    f.advance(300);assert.equal(f.clicks(),0);
   }
 });
 
@@ -210,4 +209,10 @@ test('준비 화면의 재보정 이전 지연 타이머는 새 시각을 발동
   assert.equal(f.clicks(),0);assert.equal(status.clock.deadlineMono,300);
   assert.equal(status.clock.outcome,'armed');assert.equal(status.clock.firedAtMono,undefined);
   f.advance(300);assert.equal(f.clicks(),1);assert.equal(status.clickedMono,300);
+});
+
+test('production scheduled window starts two seconds early and requires clock validity through its end',()=>{
+ const f=fixture(),status=f.arm({httpRetry:true,preWindowMs:2000,postWindowMs:2000});
+ assert.equal(f.clock({deadlineMono:2100,validUntilMono:3000}),false);
+ assert.equal(f.clock({deadlineMono:2100,validUntilMono:5000}),true);f.advance(99);assert.equal(f.clicks(),0);f.advance(100);assert.equal(f.clicks(),1);assert.equal(status.clickedMono,100);
 });

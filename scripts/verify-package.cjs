@@ -3,7 +3,7 @@ const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypt
 (async()=>{
   const {extractFile,listPackage}=await import('@electron/asar');
   const root=path.resolve(__dirname,'..'),pkg=require('../package.json'),version=pkg.version.replace(/\.0$/,'');
-  const output=path.join(root,'outputs',`BaseballTicketHelper-v${version}-win32-x64`),archive=path.join(output,'resources','app.asar');
+  const output=path.join(process.env.TICKET_PACKAGE_OUT?path.resolve(process.env.TICKET_PACKAGE_OUT):path.join(root,'outputs'),`BaseballTicketHelper-v${version}-win32-x64`),archive=path.join(output,'resources','app.asar');
   const panel=JSON.parse(fs.readFileSync(path.join(root,`work/panel-smoke-result-v${version}.json`),'utf8'));
   const testLog=fs.readFileSync(path.join(root,`work/tests-v${version}.txt`),'utf8');
   const passed=Number(testLog.match(/ℹ pass (\d+)/)?.[1]),failed=Number(testLog.match(/ℹ fail (\d+)/)?.[1]);
@@ -13,7 +13,8 @@ const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypt
   if(!noClick.passed||noClick.version!==pkg.version||!noClick.minimized||noClick.domInputEvents!==0||noClick.captchaVerifications!==2||noClick.seatStatusRequests!==1||noClick.standardPriceName!=='일반가'||noClick.destination!=='/payment')throw Error('일반 가격을 포함한 최소화·클릭 없는 전체 흐름 검증이 필요합니다.');
   report.noClickFlow=noClick;
   const entry=JSON.parse(fs.readFileSync(path.join(root,`work/entry-http-smoke-v${version}.json`),'utf8'));
-  if(!entry.passed||entry.checks.length<9||!entry.checks.some(c=>c.name.includes('countdown UI remains disabled')&&c.calls===1)||!entry.checks.some(c=>c.name.includes('early request waits')&&c.calls===1&&c.functions===0)||!entry.checks.some(c=>c.name.includes('waiting for the deadline')&&c.calls===0))throw Error('비활성 버튼에서 정시 API 호출·조기 전송 차단·중복·중지 검증이 필요합니다.');
+  if(!entry.passed||entry.checks.length<11||!entry.checks.some(c=>c.name.includes('countdown UI remains disabled')&&c.calls===1)||!entry.checks.some(c=>c.name.includes('early request waits')&&c.calls===1&&c.functions===0)||!entry.checks.some(c=>c.name.includes('waiting for the deadline')&&c.calls===0))throw Error('비활성 버튼에서 정시 API 호출·조기 전송 차단·중복·중지 검증이 필요합니다.');
+  if(entry.window?.beforeMs!==2000||entry.window?.afterMs!==2000||entry.window?.intervalMs!==30||!entry.checks.some(c=>c.name.includes('not-open responses retry')&&c.calls>=4)||!entry.checks.some(c=>c.name.includes('real browser navigation')))throw Error('재시도 구간 및 다음 페이지 이동 검증이 필요합니다.');
   report.entry=entry;
   const listing=JSON.parse(fs.readFileSync(path.join(root,`work/listing-entry-smoke-v${version}.json`),'utf8'));
   if(!listing.passed||listing.checks.length<9)throw Error('목록 활성화·중지·예약 시각 검증이 필요합니다.');

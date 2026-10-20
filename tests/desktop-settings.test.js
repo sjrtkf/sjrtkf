@@ -23,9 +23,9 @@ test('entry strategy and signed millisecond adjustment survive settings serializ
   assert.deepEqual(entrySettings(cleanSettings()),{entryStrategy:'site',entryOffsetMs:0});
 });
 test('corrupt saved entry values use safe defaults, while explicit changes reject invalid values',()=>{
-  for(const entryOffsetMs of [null,'-50','',-251,251,1.5,NaN,Infinity]){
+  for(const entryOffsetMs of [null,'-50','',-3001,3001,1.5,NaN,Infinity]){
     assert.equal(cleanSettings({entryStrategy:'clock',entryOffsetMs}).entryOffsetMs,0);
-    assert.throws(()=>entrySettings({entryStrategy:'clock',entryOffsetMs},{strict:true}),/-250~250ms/);
+    assert.throws(()=>entrySettings({entryStrategy:'clock',entryOffsetMs},{strict:true}),/-3000~3000ms/);
   }
   for(const entryStrategy of [null,'api','',42]){
     assert.equal(cleanSettings({entryStrategy,entryOffsetMs:100}).entryStrategy,'site');

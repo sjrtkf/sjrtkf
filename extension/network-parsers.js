@@ -113,9 +113,6 @@ classifyEntryResponse:function classifyEntryResponse(status,body){
     try{const u=new URL(data.redirectUrl);if(u.origin==='https://tickets.interpark.com'&&!u.username&&!u.password&&!u.hash&&!/\/(?:error|fail)(?:\/|$)/i.test(u.pathname)&&!u.searchParams.has('errorCode')&&!u.searchParams.has('error')&&/^\/(?:waiting(?:\/|$)|onestop(?:\/|$))/.test(u.pathname))return {outcome:'redirect-ready',code:'VALID_REDIRECT'};}catch{}
     return {outcome:'unknown',code:'INVALID_REDIRECT'};
   }
-  // P40057 is the published onestop PRODUCT_NOT_OPEN code. Only an explicit
-  // rejection carrying that exact code qualifies; never infer it from HTTP 403.
-  // Its occurrence on secure-url has not yet been observed in a live opening.
   if(status>=400&&status<500&&![401,429].includes(status)&&code==='P40057'&&!data.redirectUrl)return {outcome:'not-open',code};
   return {outcome:status>=400&&status<500?'blocked':'unknown',code:code||'UNCLASSIFIED_RESPONSE'};
 },

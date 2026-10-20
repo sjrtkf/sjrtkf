@@ -13,6 +13,11 @@ const {codeRuntime}=require('../src/code-runtime');
 // Build-time source copying produces static MV3 code. The extension never evaluates
 // received JavaScript, accepts function source, or loads remotely hosted code.
 const fs=require('node:fs'),path=require('node:path');
+// Keep the installed extension and desktop release version in sync.
+const manifestPath=path.join(__dirname,'manifest.json');
+const manifest=JSON.parse(fs.readFileSync(manifestPath,'utf8'));
+manifest.version=require('../package.json').version;
+fs.writeFileSync(manifestPath,JSON.stringify(manifest,null,2)+'\n');
 const entry=require('../src/entry'),live=require('../src/live-adapter'),flow=require('../src/flow'),captcha=require('../src/captcha-page'),manualCaptcha=require('../src/manual-captcha-page');
 const observation=require('../src/booking-observation');
 const {pageActions}=require('../src/chrome-target');

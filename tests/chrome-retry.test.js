@@ -225,19 +225,19 @@ test('Chrome entry-only inspection stops at the seat page before scene reads, no
 });
 test('Chrome start rejects invalid clock offsets before reserving an execution',async()=>{
   const t=setup();t.api.trackTabs([{id:1,url:'https://tickets.interpark.com/gates/ticket/26005452'}]);
-  for(const entryOffsetMs of [-251,251,0.5,'25',NaN]){
+  for(const entryOffsetMs of [-3001,3001,0.5,'25',NaN]){
     await assert.rejects(t.api.command('start',{entryOffsetMs}),/진입 시각 보정/);assert.equal(t.api.runs.current,null);
   }
 });
-test('Chrome server-clock offsets adjust only the page timer, keeping the official open time unchanged',async()=>{
+test('Chrome fixed opening window ignores the saved manual offset without changing the official time',async()=>{
   for(const offsetMs of [-250,0,250]){
     const t=setup({clockForGate:()=>({serverNowMs:100000,validForMs:60000,uncertaintyMs:20}),invoke:fn=>fn==='pageClock'?{pageMono:1000,documentId:'one'}:true});
     const run=t.start();run.entry.strategy='clock';run.entry.offsetMs=offsetMs;run.clockEligible=true;run.openAt=110000;run.clockTask=Promise.resolve();
     t.api.setClock({anchorMonoMs:100});await t.api.scheduleGateClock(run,t.api.current(),{phase:'armed'});
-    const call=t.seen.calls.find(c=>c.fn==='setGateClock');assert.ok(call);assert.equal(call.arg.openAt,110000);assert.equal(call.arg.deadlineMono,11000+offsetMs);assert.equal(run.openAt,110000);
+    const call=t.seen.calls.find(c=>c.fn==='setGateClock');assert.ok(call);assert.equal(call.arg.openAt,110000);assert.equal(call.arg.deadlineMono,11000);assert.equal(run.openAt,110000);
   }
 });
-test('Chrome server-clock positive offset also participates in sample freshness validation',async()=>{
+test('Chrome clock sample must remain valid through opening plus two seconds',async()=>{
   const t=setup({clockForGate:()=>({serverNowMs:100000,validForMs:10100,uncertaintyMs:20}),invoke:()=>true});
   const run=t.start();run.entry.strategy='clock';run.entry.offsetMs=250;run.clockEligible=true;run.openAt=110000;run.clockTask=Promise.resolve();t.api.setClock({anchorMonoMs:100});
   await t.api.scheduleGateClock(run,t.api.current(),{phase:'armed'});assert.equal(t.seen.calls.length,0);

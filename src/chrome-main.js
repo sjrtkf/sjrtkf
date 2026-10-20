@@ -514,15 +514,15 @@ async function scheduleGateClock(run,wc,status,{listing=false}={}){
   if(run.entry.strategy!=='clock'||!run.clockEligible||run.entry.trigger||run.entry.requestCount||status?.phase!=='armed'||status.clock?.firedAtMono!=null&&status.clock.outcome!=='stale')return;
   const monoNow=performance.now(),estimate=clockForGate(clockInfo,{monoNow});
   const plannedServerNow=estimate?.serverNowMs??Date.now()+(clockInfo?.offsetMs||0);
-  // Refresh before opening in the background; never block the activation observer on a clock fetch.
-  if(run.openAt-plannedServerNow<=45000&&run.openAt-plannedServerNow>=-60000&&!run.clockTask&&(run.lastClockRefresh==null||monoNow-run.lastClockRefresh>=30000)){
+  // Refresh server clock automatically if missing or within 60s before opening
+  if((!estimate||run.openAt-plannedServerNow<=45000&&run.openAt-plannedServerNow>=-60000)&&!run.clockTask&&(run.lastClockRefresh==null||monoNow-run.lastClockRefresh>=15000)){
     run.lastClockRefresh=monoNow;
-    run.clockTask=syncClock().catch(()=>{if(runs.current===run){run.entry.clockReason='서버 시각 조회 실패 · 예약 진입을 보류합니다. 활성화 감지 방식으로 다시 시작할 수 있습니다.';state();}}).finally(()=>{run.clockTask=null;});
+    run.clockTask=syncClock().catch(()=>{if(runs.current===run){run.entry.clockReason='서버 시각 조회 실패 · 재시도 대기 중';state();}}).finally(()=>{run.clockTask=null;});
   }
-  if(!estimate&&run.openAt+(run.entry.offsetMs||0)+60000<plannedServerNow&&!run.clockTask)throw Error('유효한 서버 시각을 확인하지 못했습니다. 활성화 감지 방식으로 다시 시작해 주세요.');
+  if(!estimate&&run.openAt+60000<plannedServerNow&&!run.clockTask)throw Error('유효한 서버 시각을 확인하지 못했습니다. 활성화 감지 방식으로 다시 시작해 주세요.');
   if(!estimate){run.entry.clockReason=run.clockTask?'최근 서버 시각 조회 중 · 예약 진입 보류':'유효한 시각 표본이 없어 예약 진입을 보류합니다.';if(!run.clockTask)run.entry.clockOutcome='waiting-sync';return;}
-  const offsetMs=run.entry.offsetMs||0;
-  if(estimate.validForMs<run.openAt+offsetMs-estimate.serverNowMs||run.clockAppliedAnchor===clockInfo.anchorMonoMs&&run.clockAppliedDocument===status.documentId)return;
+  const offsetMs=0; // Fixed opening ±2s window; saved manual offsets do not shift it.
+  if(estimate.validForMs<run.openAt+2000-estimate.serverNowMs||run.clockAppliedAnchor===clockInfo.anchorMonoMs&&run.clockAppliedDocument===status.documentId)return;
   const sample=clockInfo,before=performance.now(),scope=scopeVersions.get(wc.id),url=wc.getURL();
   const page=await readEntryPage(run,wc,'pageClock',listing?{entryStage:'listing'}:undefined);const after=performance.now();
   if(page===ENTRY_READ_MOVED)return;
@@ -835,7 +835,7 @@ function launch(run,task){
 }
 async function startRun(payload){
   const extensionVersion=bridge.getState().extensionVersion;
-  if(extensionVersion!==undefined&&!seatExtensionCompatible(extensionVersion))throw Error('정시 API 진입과 좌석 등급별 일반 가격 선택에는 v0.9.28 이상 Chrome 확장이 필요합니다. 확장 업데이트 적용 후 다시 연결해 주세요.');
+  if(extensionVersion!==undefined&&!seatExtensionCompatible(extensionVersion))throw Error('정시 API 진입과 좌석 등급별 일반 가격 선택에는 v0.9.29 이상 Chrome 확장이 필요합니다. 확장 업데이트 적용 후 다시 연결해 주세요.');
   if(bridge.getState().bookingNoticeSupported===false)throw Error('예매 안내를 처리하려면 v0.9 폴더의 chrome-extension을 등록하고 새 코드로 다시 연결해 주세요.');
   const requestedPreferences=normalizePreferences(payload?.preferences||preferences);
   if(extensionVersion!==undefined&&!/^0\.9\.(?:[7-9]|[1-9]\d+)$/.test(String(extensionVersion)))throw Error('경기 식별 검증에는 v0.9.7 Chrome 확장이 필요합니다.');
