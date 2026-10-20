@@ -89,7 +89,9 @@ async function inspectTargets({targets,bridge,activeTargetId}){
 async function startLiveBookingTest({mode,configPath,configRoot,bridge,targets,command,runs,dataRoot,state=()=>{},getPreferences=()=>({}),getActiveTargetId=()=>null,version=require('../package.json').version,connectionWaitMs=20000,now=Date.now}){
   if(!['inspect','run'].includes(mode))throw Error('LIVE_TEST_FLAGS_INVALID');
   const until=Date.now()+Math.max(0,Math.min(60000,connectionWaitMs));
-  while((!bridge.getState().connected||targets.size===0||mode==='run'&&bridge.getState().extensionVersion!==version)&&Date.now()<until)await sleep(100);
+  // A restored pairing initially reports the previous extension version.
+  // Let its first heartbeat or update/reconnect settle before inspecting tabs.
+  while((!bridge.getState().connected||targets.size===0||bridge.getState().extensionVersion!==version)&&Date.now()<until)await sleep(100);
   const base={version,mode,paymentAttempted:false};
   fs.mkdirSync(dataRoot,{recursive:true});
   if(mode==='inspect'){

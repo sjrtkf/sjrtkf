@@ -118,3 +118,13 @@ test('unsupported and credential-bearing URLs are excluded from inspection',asyn
   const snapshot=await inspectTargets({targets:new Map(),bridge:{getState:()=>({connected:false,pairCode:'secret',token:'secret'})}});
   assert.equal(JSON.stringify(snapshot).includes('secret'),false);
 });
+
+test('inspection waits for the first current-version heartbeat after restoring a pairing',async t=>{
+  const f=fixture(t);let current='0.9.27';
+  f.args.bridge={getState:()=>({connected:true,extensionVersion:current})};
+  const timer=setTimeout(()=>{current='0.9.28';},20);t.after(()=>clearTimeout(timer));
+  const output=await startLiveBookingTest({...f.args,mode:'inspect',connectionWaitMs:1000});
+  assert.equal(output.result.extensionVersion,'0.9.28');
+  assert.equal(output.result.tabs[0].error,undefined);
+  assert.deepEqual(f.calls,[]);
+});
